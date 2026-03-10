@@ -1,4 +1,4 @@
-import type { GroundingSource, ScheduleDto, NotificationDto } from '@ainyc/aeo-platform-contracts'
+import type { GroundingSource, ScheduleDto, NotificationDto } from '@ainyc/canonry-contracts'
 
 export type { GroundingSource }
 
@@ -220,7 +220,8 @@ export async function fetchHealthCheck(): Promise<{ status: string }> {
 }
 
 export function updateProviderConfig(provider: string, body: {
-  apiKey: string
+  apiKey?: string
+  baseUrl?: string
   model?: string
 }): Promise<ApiProviderSummary> {
   return apiFetch(`/settings/providers/${encodeURIComponent(provider)}`, {

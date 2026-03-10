@@ -3,12 +3,13 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import Fastify from 'fastify'
 import type { FastifyInstance } from 'fastify'
-import { apiRoutes } from '@ainyc/aeo-platform-api-routes'
-import type { DatabaseClient } from '@ainyc/aeo-platform-db'
-import { geminiAdapter } from '@ainyc/aeo-platform-provider-gemini'
-import { openaiAdapter } from '@ainyc/aeo-platform-provider-openai'
-import { claudeAdapter } from '@ainyc/aeo-platform-provider-claude'
-import type { ProviderName } from '@ainyc/aeo-platform-contracts'
+import { apiRoutes } from '@ainyc/canonry-api-routes'
+import type { DatabaseClient } from '@ainyc/canonry-db'
+import { geminiAdapter } from '@ainyc/canonry-provider-gemini'
+import { openaiAdapter } from '@ainyc/canonry-provider-openai'
+import { claudeAdapter } from '@ainyc/canonry-provider-claude'
+import { localAdapter } from '@ainyc/canonry-provider-local'
+import type { ProviderName } from '@ainyc/canonry-contracts'
 import type { CanonryConfig } from './config.js'
 import { saveConfig } from './config.js'
 import { JobRunner } from './job-runner.js'
@@ -54,7 +55,10 @@ export async function createServer(opts: {
     }
   }
 
-  console.log('[Server] Provider config keys:', Object.keys(providers).filter(k => providers[k as keyof typeof providers]?.apiKey))
+  console.log('[Server] Configured providers:', Object.keys(providers).filter(k => {
+    const p = providers[k as keyof typeof providers]
+    return p?.apiKey || p?.baseUrl
+  }))
 
   if (providers.gemini?.apiKey) {
     registry.register(geminiAdapter, {
@@ -80,6 +84,15 @@ export async function createServer(opts: {
       quotaPolicy: providers.claude.quota ?? DEFAULT_QUOTA,
     })
   }
+  if (providers.local?.baseUrl) {
+    registry.register(localAdapter, {
+      provider: 'local',
+      apiKey: providers.local.apiKey,
+      baseUrl: providers.local.baseUrl,
+      model: providers.local.model,
+      quotaPolicy: providers.local.quota ?? DEFAULT_QUOTA,
+    })
+  }
 
   const port = opts.config.port ?? 4100
   const serverUrl = `http://localhost:${port}`
@@ -97,14 +110,14 @@ export async function createServer(opts: {
   })
 
   // Build provider summary for API routes
-  const providerSummary = (['gemini', 'openai', 'claude'] as const).map(name => ({
+  const providerSummary = (['gemini', 'openai', 'claude', 'local'] as const).map(name => ({
     name,
     model: registry.get(name)?.config.model,
     configured: !!registry.get(name),
     quota: registry.get(name)?.config.quotaPolicy,
   }))
 
-  const adapterMap = { gemini: geminiAdapter, openai: openaiAdapter, claude: claudeAdapter } as const
+  const adapterMap = { gemini: geminiAdapter, openai: openaiAdapter, claude: claudeAdapter, local: localAdapter } as const
 
   // Register API routes
   await app.register(apiRoutes, {
@@ -117,7 +130,7 @@ export async function createServer(opts: {
         app.log.error({ runId, err }, 'Job runner failed')
       })
     },
-    onProviderUpdate: (providerName: string, apiKey: string, model?: string) => {
+    onProviderUpdate: (providerName: string, apiKey: string, model?: string, baseUrl?: string) => {
       const name = providerName as keyof typeof adapterMap
       if (!(name in adapterMap)) return null
 
@@ -125,7 +138,8 @@ export async function createServer(opts: {
       if (!opts.config.providers) opts.config.providers = {}
       const existing = opts.config.providers[name]
       opts.config.providers[name] = {
-        apiKey,
+        apiKey: apiKey || existing?.apiKey,
+        baseUrl: baseUrl || existing?.baseUrl,
         model: model || existing?.model,
         quota: existing?.quota,
       }
@@ -141,7 +155,8 @@ export async function createServer(opts: {
       const quota = opts.config.providers[name]!.quota ?? DEFAULT_QUOTA
       registry.register(adapterMap[name], {
         provider: name,
-        apiKey,
+        apiKey: apiKey || existing?.apiKey,
+        baseUrl: baseUrl || existing?.baseUrl,
         model: model || existing?.model,
         quotaPolicy: quota,
       })

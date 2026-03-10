@@ -1,0 +1,23 @@
+{
+  "name": "@ainyc/canonry-provider-local",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "tsx --test test/*.test.ts",
+    "lint": "eslint src/ test/"
+  },
+  "dependencies": {
+    "@ainyc/canonry-contracts": "workspace:*",
+    "openai": "^4.85.0"
+  }
+}

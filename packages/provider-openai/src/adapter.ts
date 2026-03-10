@@ -5,7 +5,7 @@ import type {
   TrackedQueryInput,
   RawQueryResult,
   NormalizedQueryResult,
-} from '@ainyc/aeo-platform-contracts'
+} from '@ainyc/canonry-contracts'
 import {
   validateConfig as openaiValidateConfig,
   healthcheck as openaiHealthcheck,
@@ -16,7 +16,7 @@ import type { OpenAIConfig } from './types.js'
 
 function toOpenAIConfig(config: ProviderConfig): OpenAIConfig {
   return {
-    apiKey: config.apiKey,
+    apiKey: config.apiKey ?? '',
     model: config.model,
     quotaPolicy: config.quotaPolicy,
   }
