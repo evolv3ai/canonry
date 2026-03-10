@@ -13,6 +13,8 @@ import type { CanonryConfig } from './config.js'
 import { saveConfig } from './config.js'
 import { JobRunner } from './job-runner.js'
 import { ProviderRegistry } from './provider-registry.js'
+import { Scheduler } from './scheduler.js'
+import { Notifier } from './notifier.js'
 
 const DEFAULT_QUOTA = {
   maxConcurrency: 2,
@@ -25,7 +27,19 @@ export async function createServer(opts: {
   db: DatabaseClient
   open?: boolean
 }): Promise<FastifyInstance> {
-  const app = Fastify({ logger: true })
+  const app = Fastify({
+    logger: {
+      transport: {
+        target: 'pino-pretty',
+        options: {
+          colorize: true,
+          translateTime: 'HH:MM:ss',
+          ignore: 'pid,hostname,reqId',
+          messageFormat: '{msg} {req.method} {req.url}',
+        },
+      },
+    },
+  })
 
   // Build provider registry from config (with legacy field migration)
   const registry = new ProviderRegistry()
@@ -67,7 +81,20 @@ export async function createServer(opts: {
     })
   }
 
+  const port = opts.config.port ?? 4100
+  const serverUrl = `http://localhost:${port}`
+
   const jobRunner = new JobRunner(opts.db, registry)
+  const notifier = new Notifier(opts.db, serverUrl)
+  jobRunner.onRunCompleted = (runId, projectId) => notifier.onRunCompleted(runId, projectId)
+
+  const scheduler = new Scheduler(opts.db, {
+    onRunCreated: (runId, projectId, providers) => {
+      jobRunner.executeRun(runId, projectId, providers).catch((err: unknown) => {
+        app.log.error({ runId, err }, 'Scheduled job runner failed')
+      })
+    },
+  })
 
   // Build provider summary for API routes
   const providerSummary = (['gemini', 'openai', 'claude'] as const).map(name => ({
@@ -134,6 +161,13 @@ export async function createServer(opts: {
         quota,
       }
     },
+    onScheduleUpdated: (action: 'upsert' | 'delete', projectId: string) => {
+      if (action === 'upsert') scheduler.upsert(projectId)
+      if (action === 'delete') scheduler.remove(projectId)
+    },
+    onProjectDeleted: (projectId: string) => {
+      scheduler.remove(projectId)
+    },
   })
 
   // Try to serve static SPA assets
@@ -187,6 +221,14 @@ export async function createServer(opts: {
     service: 'canonry',
     version: '0.1.0',
   }))
+
+  // Start scheduler after setup
+  scheduler.start()
+
+  // Graceful shutdown
+  app.addHook('onClose', async () => {
+    scheduler.stop()
+  })
 
   return app
 }

@@ -14,6 +14,7 @@ import {
   computedTransitionSchema,
   querySnapshotDtoSchema,
   auditLogEntrySchema,
+  notificationEventSchema,
 } from '../src/index.js'
 
 test('projectDtoSchema applies defaults for tags, labels, configSource, configRevision', () => {
@@ -187,4 +188,52 @@ test('AppError is an instance of Error', () => {
   const err = new AppError('INTERNAL_ERROR', 'something broke', 500)
   assert.ok(err instanceof Error)
   assert.equal(err.name, 'AppError')
+})
+
+// --- Notification schema tests ---
+
+test('notificationEventSchema accepts valid events', () => {
+  for (const event of ['citation.lost', 'citation.gained', 'run.completed', 'run.failed']) {
+    assert.equal(notificationEventSchema.parse(event), event)
+  }
+})
+
+test('notificationEventSchema rejects invalid events', () => {
+  assert.throws(() => notificationEventSchema.parse('invalid.event'))
+})
+
+// --- Config schema with schedule ---
+
+test('projectConfigSchema accepts config with schedule preset', () => {
+  const config = projectConfigSchema.parse({
+    apiVersion: 'canonry/v1',
+    kind: 'Project',
+    metadata: { name: 'test-project' },
+    spec: {
+      displayName: 'Test',
+      canonicalDomain: 'example.com',
+      country: 'US',
+      language: 'en',
+      schedule: { preset: 'daily', timezone: 'America/New_York' },
+      notifications: [{ channel: 'webhook', url: 'https://hooks.example.com/test', events: ['citation.lost'] }],
+    },
+  })
+
+  assert.ok(config.spec.schedule)
+  assert.equal(config.spec.notifications.length, 1)
+})
+
+test('projectConfigSchema rejects schedule with both preset and cron', () => {
+  assert.throws(() => projectConfigSchema.parse({
+    apiVersion: 'canonry/v1',
+    kind: 'Project',
+    metadata: { name: 'test-project' },
+    spec: {
+      displayName: 'Test',
+      canonicalDomain: 'example.com',
+      country: 'US',
+      language: 'en',
+      schedule: { preset: 'daily', cron: '0 6 * * *' },
+    },
+  }))
 })

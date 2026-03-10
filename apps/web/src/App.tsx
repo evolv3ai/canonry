@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useState } from 'react'
+import { Fragment, useCallback, useEffect, useId, useMemo, useState } from 'react'
 import type { MouseEvent, ReactNode } from 'react'
 
 import {
@@ -37,11 +37,21 @@ import {
   deleteProject as apiDeleteProject,
   fetchSettings,
   updateProviderConfig,
+  fetchSchedule,
+  saveSchedule,
+  removeSchedule,
+  listNotifications,
+  addNotification,
+  removeNotification,
+  sendTestNotification,
+  type ApiSchedule,
+  type ApiNotification,
 } from './api.js'
 import { buildDashboard } from './build-dashboard.js'
 import type { ProjectData } from './build-dashboard.js'
 import type {
   CitationInsightVm,
+  CitationState,
   DashboardVm,
   HealthSnapshot,
   MetricTone,
@@ -597,41 +607,33 @@ function EvidenceTable({
   evidence: CitationInsightVm[]
   onOpenEvidence: (evidenceId: string) => void
 }) {
-  const [providerFilter, setProviderFilter] = useState<string>('all')
-  const providers = [...new Set(evidence.map(e => e.provider))].sort()
-  const showProviderColumn = providers.length > 1
-  const filtered = providerFilter === 'all' ? evidence : evidence.filter(e => e.provider === providerFilter)
+  const [expandedPhrases, setExpandedPhrases] = useState<Set<string>>(new Set())
+
+  const groups = useMemo(() => {
+    const map = new Map<string, CitationInsightVm[]>()
+    for (const item of evidence) {
+      const existing = map.get(item.keyword) ?? []
+      map.set(item.keyword, [...existing, item])
+    }
+    return [...map.entries()].map(([phrase, items]) => ({ phrase, items }))
+  }, [evidence])
+
+  const togglePhrase = (phrase: string) => {
+    setExpandedPhrases(prev => {
+      const next = new Set(prev)
+      if (next.has(phrase)) next.delete(phrase)
+      else next.add(phrase)
+      return next
+    })
+  }
 
   return (
     <div className="evidence-table-wrap">
-      {showProviderColumn && (
-        <div className="filter-row mb-2" role="toolbar" aria-label="Provider filters">
-          <button
-            className={`filter-chip ${providerFilter === 'all' ? 'filter-chip-active' : ''}`}
-            type="button"
-            aria-pressed={providerFilter === 'all'}
-            onClick={() => setProviderFilter('all')}
-          >
-            All providers
-          </button>
-          {providers.map((p) => (
-            <button
-              key={p}
-              className={`filter-chip ${providerFilter === p ? 'filter-chip-active' : ''}`}
-              type="button"
-              aria-pressed={providerFilter === p}
-              onClick={() => setProviderFilter(p)}
-            >
-              {toTitleCase(p)}
-            </button>
-          ))}
-        </div>
-      )}
       <table className="evidence-table">
         <thead>
           <tr>
-            <th>Keyword</th>
-            {showProviderColumn && <th>Provider</th>}
+            <th style={{ width: '2rem' }} />
+            <th>Key Phrase</th>
             <th>Status</th>
             <th>Change</th>
             <th>Summary</th>
@@ -640,27 +642,67 @@ function EvidenceTable({
           </tr>
         </thead>
         <tbody>
-          {filtered.map((item) => (
-            <tr key={item.id}>
-              <td className="evidence-keyword-cell">{item.keyword}</td>
-              {showProviderColumn && (
-                <td><ProviderBadge provider={item.provider} /></td>
-              )}
-              <td>
-                <CitationBadge state={item.citationState} />
-              </td>
-              <td className="evidence-change-cell">{item.changeLabel}</td>
-              <td className="evidence-summary-cell">{item.summary}</td>
-              <td className="evidence-snippet-cell" title={item.answerSnippet}>
-                {item.answerSnippet}
-              </td>
-              <td>
-                <Button variant="ghost" size="sm" type="button" onClick={() => onOpenEvidence(item.id)}>
-                  View
-                </Button>
-              </td>
-            </tr>
-          ))}
+          {groups.map(({ phrase, items }) => {
+            const isExpanded = expandedPhrases.has(phrase)
+            const states = items.map(i => i.citationState)
+            const aggState: CitationState =
+              states.includes('cited') ? 'cited' :
+              states.includes('emerging') ? 'emerging' :
+              states.includes('lost') ? 'lost' : 'not-cited'
+
+            return (
+              <Fragment key={phrase}>
+                <tr
+                  className="evidence-phrase-row cursor-pointer hover:bg-zinc-800/40"
+                  onClick={() => togglePhrase(phrase)}
+                  aria-expanded={isExpanded}
+                >
+                  <td>
+                    <ChevronRight
+                      size={14}
+                      className={`transition-transform duration-150 text-zinc-500 ${isExpanded ? 'rotate-90' : ''}`}
+                    />
+                  </td>
+                  <td className="evidence-keyword-cell">
+                    <div>
+                      <span className="font-medium text-zinc-100">{phrase}</span>
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {items.map(item => (
+                          <ProviderBadge key={item.id} provider={item.provider} />
+                        ))}
+                      </div>
+                    </div>
+                  </td>
+                  <td><CitationBadge state={aggState} /></td>
+                  <td colSpan={4} />
+                </tr>
+                {isExpanded && items.map(item => (
+                  <tr key={item.id} className="bg-zinc-900/30">
+                    <td />
+                    <td className="evidence-keyword-cell pl-5">
+                      <ProviderBadge provider={item.provider} />
+                    </td>
+                    <td><CitationBadge state={item.citationState} /></td>
+                    <td className="evidence-change-cell">{item.changeLabel}</td>
+                    <td className="evidence-summary-cell">{item.summary}</td>
+                    <td className="evidence-snippet-cell" title={item.answerSnippet}>
+                      {item.answerSnippet}
+                    </td>
+                    <td>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onOpenEvidence(item.id) }}
+                      >
+                        View
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </Fragment>
+            )
+          })}
         </tbody>
       </table>
     </div>
@@ -1002,7 +1044,7 @@ function ProjectPage({
           <h3 className="text-base font-semibold text-rose-400 mb-2">Delete project?</h3>
           <p className="text-sm text-zinc-400 mb-4">
             This will permanently delete <strong className="text-zinc-200">{model.project.displayName || model.project.name}</strong> and
-            all its keywords, competitors, runs, and snapshots. This cannot be undone.
+            all its key phrases, competitors, runs, and snapshots. This cannot be undone.
           </p>
           <div className="flex items-center gap-3">
             <Button
@@ -1133,7 +1175,7 @@ function ProjectPage({
           <div className="section-head section-head-inline">
             <div>
               <p className="eyebrow eyebrow-soft">Provider breakdown</p>
-              <h2>Visibility by provider <InfoTooltip text="Per-provider citation rate. Shows how often each AI engine cites your domain across all tracked keywords. Useful for identifying which engines favor your content." /></h2>
+              <h2>Visibility by provider <InfoTooltip text="Per-provider citation rate. Shows how often each AI engine cites your domain across all tracked key phrases. Useful for identifying which engines favor your content." /></h2>
             </div>
           </div>
           <div className="grid grid-cols-3 gap-3">
@@ -1145,7 +1187,7 @@ function ProjectPage({
                     {ps.score}%
                   </span>
                 </div>
-                <p className="mt-1 text-xs text-zinc-500">{ps.cited} of {ps.total} keywords cited</p>
+                <p className="mt-1 text-xs text-zinc-500">{ps.cited} of {ps.total} key phrases cited</p>
               </Card>
             ))}
           </div>
@@ -1157,7 +1199,7 @@ function ProjectPage({
         <div className="section-head section-head-inline">
           <div>
             <p className="eyebrow eyebrow-soft">What changed</p>
-            <h2>Interpretation before raw evidence</h2>
+            <h2>Citation signals</h2>
           </div>
         </div>
         <div className="insight-grid">
@@ -1183,12 +1225,12 @@ function ProjectPage({
         <div className="section-head section-head-inline">
           <div>
             <p className="eyebrow eyebrow-soft">Visibility evidence</p>
-            <h2>Keyword citation tracking</h2>
+            <h2>Key phrase citation tracking</h2>
           </div>
           <div className="flex items-center gap-3">
-            <p className="supporting-copy">{model.visibilityEvidence.length} keywords tracked</p>
+            <p className="supporting-copy">{new Set(model.visibilityEvidence.map(e => e.keyword)).size} key phrases tracked</p>
             <Button type="button" variant="outline" size="sm" onClick={() => setAddingKeywords(!addingKeywords)}>
-              {addingKeywords ? 'Cancel' : '+ Add keywords'}
+              {addingKeywords ? 'Cancel' : '+ Add key phrases'}
             </Button>
           </div>
         </div>
@@ -1197,14 +1239,14 @@ function ProjectPage({
             <textarea
               className="w-full resize-none rounded border border-zinc-700 bg-transparent px-2 py-1.5 text-sm text-zinc-200 placeholder-zinc-600 focus:border-zinc-500 focus:outline-none"
               rows={3}
-              placeholder="Enter keywords, one per line"
+              placeholder="Enter key phrases, one per line"
               value={newKeywordText}
               onChange={(e) => setNewKeywordText(e.target.value)}
             />
             <div className="mt-2 flex items-center justify-between">
-              <p className="text-xs text-zinc-500">{newKeywordText.split('\n').filter(k => k.trim()).length} keywords</p>
+              <p className="text-xs text-zinc-500">{newKeywordText.split('\n').filter(k => k.trim()).length} key phrases</p>
               <Button type="button" size="sm" disabled={!newKeywordText.trim() || keywordSaving} onClick={handleAddKeywords}>
-                {keywordSaving ? 'Adding...' : 'Add keywords'}
+                {keywordSaving ? 'Adding...' : 'Add key phrases'}
               </Button>
             </div>
           </div>
@@ -1285,7 +1327,496 @@ function ProjectPage({
           ))}
         </div>
       </section>
+
+      <ScheduleSection projectName={model.project.name} />
+      <NotificationsSection projectName={model.project.name} />
     </div>
+  )
+}
+
+// --- Schedule helpers ---
+const FREQ_OPTIONS = [
+  { value: 'daily', label: 'Every day' },
+  { value: 'weekly@mon', label: 'Every Monday' },
+  { value: 'weekly@wed', label: 'Every Wednesday' },
+  { value: 'weekly@fri', label: 'Every Friday' },
+  { value: 'twice-daily', label: 'Twice a day (6am & 6pm)' },
+  { value: 'custom', label: 'Custom cron expression' },
+] as const
+
+const COMMON_TIMEZONES = [
+  'UTC',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'America/Toronto',
+  'America/Vancouver',
+  'Europe/London',
+  'Europe/Paris',
+  'Europe/Berlin',
+  'Asia/Tokyo',
+  'Asia/Shanghai',
+  'Asia/Singapore',
+  'Australia/Sydney',
+] as const
+
+function formatHour(h: number): string {
+  if (h === 0) return '12:00 AM'
+  if (h < 12) return `${h}:00 AM`
+  if (h === 12) return '12:00 PM'
+  return `${h - 12}:00 PM`
+}
+
+function buildPreset(freq: string, hour: number): string {
+  if (freq === 'twice-daily') return 'twice-daily'
+  if (freq.startsWith('weekly@')) return `${freq}@${hour}`
+  return `daily@${hour}`
+}
+
+function parsePreset(preset: string | null, cronExpr: string): { freq: string; hour: number; customCron: string } {
+  if (!preset) return { freq: 'custom', hour: 6, customCron: cronExpr }
+  if (preset === 'twice-daily') return { freq: 'twice-daily', hour: 6, customCron: '' }
+  const dailyMatch = preset.match(/^daily(?:@(\d+))?$/)
+  if (dailyMatch) return { freq: 'daily', hour: dailyMatch[1] ? parseInt(dailyMatch[1]) : 6, customCron: '' }
+  const weeklyMatch = preset.match(/^(weekly@(?:mon|tue|wed|thu|fri|sat|sun))(?:@(\d+))?$/)
+  if (weeklyMatch) return { freq: weeklyMatch[1], hour: weeklyMatch[2] ? parseInt(weeklyMatch[2]) : 6, customCron: '' }
+  return { freq: 'custom', hour: 6, customCron: cronExpr }
+}
+
+function scheduleLabel(preset: string | null, cronExpr: string, timezone: string): string {
+  const tzShort = timezone === 'UTC' ? 'UTC' : (timezone.split('/').pop()?.replace(/_/g, ' ') ?? timezone)
+  if (!preset) return `Custom: ${cronExpr} · ${tzShort}`
+  if (preset === 'twice-daily') return `Twice a day (6am & 6pm) · ${tzShort}`
+  const dailyMatch = preset.match(/^daily(?:@(\d+))?$/)
+  if (dailyMatch) {
+    const h = dailyMatch[1] ? parseInt(dailyMatch[1]) : 6
+    return `Every day at ${formatHour(h)} · ${tzShort}`
+  }
+  const weeklyMatch = preset.match(/^weekly@(mon|tue|wed|thu|fri|sat|sun)(?:@(\d+))?$/)
+  if (weeklyMatch) {
+    const days: Record<string, string> = { mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday', sun: 'Sunday' }
+    const h = weeklyMatch[2] ? parseInt(weeklyMatch[2]) : 6
+    return `Every ${days[weeklyMatch[1]]} at ${formatHour(h)} · ${tzShort}`
+  }
+  return `${preset} · ${tzShort}`
+}
+
+function ScheduleSection({ projectName }: { projectName: string }) {
+  const [schedule, setSchedule] = useState<ApiSchedule | null | 'loading'>('loading')
+  const [editing, setEditing] = useState(false)
+  const [freq, setFreq] = useState('daily')
+  const [hour, setHour] = useState(6)
+  const [customCron, setCustomCron] = useState('')
+  const [timezone, setTimezone] = useState('UTC')
+  const [tzOther, setTzOther] = useState(false)
+  const [tzOtherValue, setTzOtherValue] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [removing, setRemoving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    fetchSchedule(projectName).then(setSchedule).catch(() => setSchedule(null))
+  }, [projectName])
+
+  const startEditing = () => {
+    if (schedule && schedule !== 'loading') {
+      const parsed = parsePreset(schedule.preset ?? null, schedule.cronExpr)
+      setFreq(parsed.freq)
+      setHour(parsed.hour)
+      setCustomCron(parsed.customCron)
+      const isKnownTz = (COMMON_TIMEZONES as readonly string[]).includes(schedule.timezone)
+      setTimezone(isKnownTz ? schedule.timezone : 'Other')
+      setTzOther(!isKnownTz)
+      setTzOtherValue(isKnownTz ? '' : schedule.timezone)
+    } else {
+      setFreq('daily')
+      setHour(6)
+      setCustomCron('')
+      setTimezone('UTC')
+      setTzOther(false)
+      setTzOtherValue('')
+    }
+    setError(null)
+    setEditing(true)
+  }
+
+  const handleSave = async () => {
+    setSaving(true)
+    setError(null)
+    try {
+      const effectiveTz = tzOther ? tzOtherValue.trim() || 'UTC' : timezone
+      const body: Parameters<typeof saveSchedule>[1] = { timezone: effectiveTz }
+      if (freq === 'custom') body.cron = customCron.trim()
+      else body.preset = buildPreset(freq, hour)
+      const result = await saveSchedule(projectName, body)
+      setSchedule(result)
+      setEditing(false)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save schedule')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleToggleEnabled = async () => {
+    if (!schedule || schedule === 'loading') return
+    setSaving(true)
+    setError(null)
+    try {
+      const body: Parameters<typeof saveSchedule>[1] = {
+        timezone: schedule.timezone,
+        enabled: !schedule.enabled,
+      }
+      if (schedule.preset) body.preset = schedule.preset
+      else body.cron = schedule.cronExpr
+      setSchedule(await saveSchedule(projectName, body))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update schedule')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleRemove = async () => {
+    setRemoving(true)
+    setError(null)
+    try {
+      await removeSchedule(projectName)
+      setSchedule(null)
+      setEditing(false)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to remove schedule')
+    } finally {
+      setRemoving(false)
+    }
+  }
+
+  return (
+    <section className="page-section-divider">
+      <div className="section-head section-head-inline">
+        <div>
+          <p className="eyebrow eyebrow-soft">Automation</p>
+          <h2>Scheduled runs</h2>
+        </div>
+        {schedule !== 'loading' && !editing && (
+          <Button type="button" variant="outline" size="sm" onClick={startEditing}>
+            {schedule ? 'Edit schedule' : '+ Set schedule'}
+          </Button>
+        )}
+      </div>
+
+      {schedule === 'loading' && <p className="supporting-copy">Loading...</p>}
+
+      {schedule !== 'loading' && !editing && schedule === null && (
+        <Card className="surface-card compact-card">
+          <p className="supporting-copy">No schedule configured. Set one to automatically trigger visibility sweeps.</p>
+        </Card>
+      )}
+
+      {schedule !== 'loading' && !editing && schedule !== null && (
+        <Card className="surface-card compact-card">
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-zinc-200">{scheduleLabel(schedule.preset ?? null, schedule.cronExpr, schedule.timezone)}</p>
+              <p className="text-xs text-zinc-500">Cron: <span className="font-mono">{schedule.cronExpr}</span></p>
+              {schedule.nextRunAt && (
+                <p className="text-xs text-zinc-500">Next run: {new Date(schedule.nextRunAt).toLocaleString()}</p>
+              )}
+              {schedule.lastRunAt && (
+                <p className="text-xs text-zinc-500">Last run: {new Date(schedule.lastRunAt).toLocaleString()}</p>
+              )}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <ToneBadge tone={schedule.enabled ? 'positive' : 'neutral'}>
+                {schedule.enabled ? 'Active' : 'Paused'}
+              </ToneBadge>
+              <Button type="button" variant="outline" size="sm" disabled={saving} onClick={handleToggleEnabled}>
+                {schedule.enabled ? 'Pause' : 'Resume'}
+              </Button>
+              <Button type="button" variant="ghost" size="sm" disabled={removing} onClick={handleRemove}>
+                {removing ? 'Removing...' : 'Remove'}
+              </Button>
+            </div>
+          </div>
+          {error && <p className="text-rose-400 text-sm mt-2">{error}</p>}
+        </Card>
+      )}
+
+      {editing && (
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-zinc-400">Frequency</label>
+              <select
+                className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-200 focus:border-zinc-500 focus:outline-none"
+                value={freq}
+                onChange={(e) => setFreq(e.target.value)}
+              >
+                {FREQ_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-zinc-400">Time</label>
+              <select
+                className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-200 focus:border-zinc-500 focus:outline-none disabled:opacity-40"
+                value={hour}
+                disabled={freq === 'twice-daily' || freq === 'custom'}
+                onChange={(e) => setHour(parseInt(e.target.value))}
+              >
+                {Array.from({ length: 24 }, (_, i) => (
+                  <option key={i} value={i}>{formatHour(i)}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          {freq === 'custom' && (
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-zinc-400">Cron expression</label>
+              <input
+                className="w-full rounded border border-zinc-700 bg-transparent px-2 py-1.5 text-sm text-zinc-200 placeholder-zinc-600 font-mono focus:border-zinc-500 focus:outline-none"
+                type="text"
+                placeholder="0 9 * * 1-5"
+                value={customCron}
+                onChange={(e) => setCustomCron(e.target.value)}
+              />
+            </div>
+          )}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-zinc-400">Timezone</label>
+            <select
+              className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-200 focus:border-zinc-500 focus:outline-none"
+              value={tzOther ? 'Other' : timezone}
+              onChange={(e) => {
+                if (e.target.value === 'Other') { setTzOther(true); setTimezone('Other') }
+                else { setTzOther(false); setTimezone(e.target.value) }
+              }}
+            >
+              {COMMON_TIMEZONES.map(tz => (
+                <option key={tz} value={tz}>{tz}</option>
+              ))}
+              <option value="Other">Other (enter manually)…</option>
+            </select>
+            {tzOther && (
+              <input
+                className="w-full rounded border border-zinc-700 bg-transparent px-2 py-1.5 text-sm text-zinc-200 placeholder-zinc-600 focus:border-zinc-500 focus:outline-none"
+                type="text"
+                placeholder="e.g. America/New_York"
+                value={tzOtherValue}
+                onChange={(e) => setTzOtherValue(e.target.value)}
+              />
+            )}
+          </div>
+          {error && <p className="text-rose-400 text-sm">{error}</p>}
+          <div className="flex gap-2 justify-end">
+            <Button type="button" variant="outline" size="sm" onClick={() => { setEditing(false); setError(null) }}>Cancel</Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={saving || (freq === 'custom' && !customCron.trim())}
+              onClick={handleSave}
+            >
+              {saving ? 'Saving...' : 'Save schedule'}
+            </Button>
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
+// --- Notification events ---
+const NOTIFICATION_EVENTS = [
+  { value: 'citation.lost', label: 'Citation lost' },
+  { value: 'citation.gained', label: 'Citation gained' },
+  { value: 'run.completed', label: 'Run completed' },
+  { value: 'run.failed', label: 'Run failed' },
+] as const
+
+function NotificationsSection({ projectName }: { projectName: string }) {
+  const [notifs, setNotifs] = useState<ApiNotification[] | 'loading'>('loading')
+  const [adding, setAdding] = useState(false)
+  const [webhookUrl, setWebhookUrl] = useState('')
+  const [selectedEvents, setSelectedEvents] = useState<string[]>(['citation.lost', 'citation.gained'])
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [testStates, setTestStates] = useState<Record<string, { state: 'testing' | 'ok' | 'fail'; status?: number }>>({})
+
+  useEffect(() => {
+    listNotifications(projectName).then(setNotifs).catch(() => setNotifs([]))
+  }, [projectName])
+
+  const toggleEvent = (evt: string) => {
+    setSelectedEvents(prev => prev.includes(evt) ? prev.filter(e => e !== evt) : [...prev, evt])
+  }
+
+  const handleAdd = async () => {
+    if (!webhookUrl.trim() || selectedEvents.length === 0) return
+    setSaving(true)
+    setError(null)
+    try {
+      const result = await addNotification(projectName, {
+        channel: 'webhook',
+        url: webhookUrl.trim(),
+        events: selectedEvents,
+      })
+      setNotifs(prev => prev === 'loading' ? [result] : [...prev, result])
+      setWebhookUrl('')
+      setSelectedEvents(['citation.lost', 'citation.gained'])
+      setAdding(false)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to add webhook')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleRemove = async (id: string) => {
+    try {
+      await removeNotification(projectName, id)
+      setNotifs(prev => prev === 'loading' ? prev : prev.filter(n => n.id !== id))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to remove webhook')
+    }
+  }
+
+  const handleTest = async (id: string) => {
+    setTestStates(prev => ({ ...prev, [id]: { state: 'testing' } }))
+    try {
+      const result = await sendTestNotification(projectName, id)
+      setTestStates(prev => ({ ...prev, [id]: { state: result.ok ? 'ok' : 'fail', status: result.status } }))
+    } catch {
+      setTestStates(prev => ({ ...prev, [id]: { state: 'fail' } }))
+    }
+  }
+
+  return (
+    <section className="page-section-divider">
+      <div className="section-head section-head-inline">
+        <div>
+          <p className="eyebrow eyebrow-soft">Automation</p>
+          <h2>Notifications</h2>
+        </div>
+        {notifs !== 'loading' && (
+          <Button type="button" variant="outline" size="sm" onClick={() => { setAdding(!adding); setError(null) }}>
+            {adding ? 'Cancel' : '+ Add webhook'}
+          </Button>
+        )}
+      </div>
+
+      {adding && (
+        <div className="mb-3 rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-zinc-400">Webhook URL</label>
+            <input
+              className="w-full rounded border border-zinc-700 bg-transparent px-2 py-1.5 text-sm text-zinc-200 placeholder-zinc-600 focus:border-zinc-500 focus:outline-none"
+              type="url"
+              placeholder="https://hooks.example.com/canonry"
+              value={webhookUrl}
+              onChange={(e) => setWebhookUrl(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-zinc-400">Trigger on</label>
+            <div className="flex flex-wrap gap-3">
+              {NOTIFICATION_EVENTS.map(evt => (
+                <label key={evt.value} className="flex items-center gap-1.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="rounded border-zinc-600 bg-zinc-800"
+                    checked={selectedEvents.includes(evt.value)}
+                    onChange={() => toggleEvent(evt.value)}
+                  />
+                  <span className="text-sm text-zinc-300">{evt.label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          {error && <p className="text-rose-400 text-sm">{error}</p>}
+          <div className="flex gap-2 justify-end">
+            <Button type="button" variant="outline" size="sm" onClick={() => { setAdding(false); setError(null) }}>Cancel</Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={saving || !webhookUrl.trim() || selectedEvents.length === 0}
+              onClick={handleAdd}
+            >
+              {saving ? 'Adding...' : 'Add webhook'}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {notifs === 'loading' && <p className="supporting-copy">Loading...</p>}
+
+      {notifs !== 'loading' && notifs.length === 0 && !adding && (
+        <Card className="surface-card compact-card">
+          <p className="supporting-copy">No webhooks configured. Add one to get alerted when citations change or runs complete.</p>
+        </Card>
+      )}
+
+      {notifs !== 'loading' && notifs.length > 0 && (
+        <div className="evidence-table-wrap">
+          <table className="evidence-table">
+            <thead>
+              <tr>
+                <th>URL</th>
+                <th>Events</th>
+                <th>Status</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {notifs.map(n => (
+                <tr key={n.id}>
+                  <td className="evidence-keyword-cell">
+                    <span className="font-mono text-xs text-zinc-300 break-all">{n.url}</span>
+                  </td>
+                  <td>
+                    <div className="flex flex-wrap gap-1">
+                      {n.events.map(evt => (
+                        <span key={evt} className="inline-flex items-center rounded-full border border-zinc-700 bg-zinc-800/60 px-2 py-0.5 text-[10px] font-medium text-zinc-400 uppercase tracking-wide">
+                          {evt.replace('.', ' ')}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
+                  <td>
+                    <ToneBadge tone={n.enabled ? 'positive' : 'neutral'}>
+                      {n.enabled ? 'Active' : 'Paused'}
+                    </ToneBadge>
+                  </td>
+                  <td>
+                    <div className="flex items-center gap-1 justify-end">
+                      {testStates[n.id] && (() => {
+                        const t = testStates[n.id]
+                        const label = t.state === 'testing' ? 'Sending…'
+                          : t.state === 'ok' ? `Delivered${t.status ? ` (${t.status})` : ''}`
+                          : `Failed${t.status ? ` (${t.status})` : ''}`
+                        return (
+                          <ToneBadge tone={t.state === 'ok' ? 'positive' : t.state === 'fail' ? 'negative' : 'neutral'}>
+                            {label}
+                          </ToneBadge>
+                        )
+                      })()}
+                      <Button variant="ghost" size="sm" type="button" disabled={testStates[n.id]?.state === 'testing'} onClick={() => handleTest(n.id)}>
+                        Test
+                      </Button>
+                      <Button variant="ghost" size="sm" type="button" onClick={() => handleRemove(n.id)}>
+                        Remove
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {error && <p className="text-rose-400 text-sm mt-2">{error}</p>}
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -1334,6 +1865,17 @@ function RunsPage({ runs, onOpenRun }: { runs: RunListItemVm[]; onOpenRun: (runI
   )
 }
 
+const PROVIDER_KEY_URLS: Record<string, string> = {
+  openai: 'https://platform.openai.com/api-keys',
+  claude: 'https://platform.claude.com/settings/keys',
+}
+
+const PROVIDER_MODEL_PLACEHOLDERS: Record<string, string> = {
+  gemini: 'e.g. gemini-2.5-flash',
+  openai: 'e.g. gpt-4o',
+  claude: 'e.g. claude-sonnet-4-6',
+}
+
 function ProviderConfigForm({ providerName, onSaved }: { providerName: string; onSaved: () => void }) {
   const [apiKey, setApiKey] = useState('')
   const [model, setModel] = useState('')
@@ -1362,10 +1904,25 @@ function ProviderConfigForm({ providerName, onSaved }: { providerName: string; o
     }
   }
 
+  const keyUrl = PROVIDER_KEY_URLS[providerName.toLowerCase()]
+  const modelPlaceholder = PROVIDER_MODEL_PLACEHOLDERS[providerName.toLowerCase()] ?? 'Use default model'
+
   return (
     <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/40 p-3 space-y-2">
       <div>
-        <label className="text-xs text-zinc-500" htmlFor={`api-key-${providerName}`}>API Key</label>
+        <div className="flex items-center justify-between">
+          <label className="text-xs text-zinc-500" htmlFor={`api-key-${providerName}`}>API Key</label>
+          {keyUrl && (
+            <a
+              href={keyUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[10px] text-zinc-500 hover:text-zinc-300 underline underline-offset-2"
+            >
+              Get API key ↗
+            </a>
+          )}
+        </div>
         <input
           id={`api-key-${providerName}`}
           type="password"
@@ -1381,7 +1938,7 @@ function ProviderConfigForm({ providerName, onSaved }: { providerName: string; o
           id={`model-${providerName}`}
           type="text"
           className="mt-0.5 w-full rounded border border-zinc-700 bg-transparent px-2 py-1.5 text-sm text-zinc-200 placeholder-zinc-600 focus:border-zinc-500 focus:outline-none"
-          placeholder="Use default model"
+          placeholder={modelPlaceholder}
           value={model}
           onChange={(e) => setModel(e.target.value)}
         />
@@ -1521,7 +2078,7 @@ function SettingsPage({
 const SETUP_STEPS = [
   { label: 'System check', description: 'Verify your instance is ready' },
   { label: 'Create project', description: 'Name, domain, and locale' },
-  { label: 'Keywords', description: 'Add keywords to track' },
+  { label: 'Key phrases', description: 'Add key phrases to track' },
   { label: 'Competitors', description: 'Add competitor domains' },
   { label: 'Launch', description: 'Start your first visibility sweep' },
 ] as const
@@ -1618,7 +2175,7 @@ function SetupPage({
       onProjectCreated()
       setStep(3)
     } catch (err) {
-      setKeywordsError(err instanceof Error ? err.message : 'Failed to save keywords')
+      setKeywordsError(err instanceof Error ? err.message : 'Failed to save key phrases')
     } finally {
       setKeywordsSaving(false)
     }
@@ -1754,15 +2311,15 @@ function SetupPage({
             <div className="section-head">
               <div>
                 <p className="eyebrow eyebrow-soft">Step 3 of 5</p>
-                <h2>Add keywords</h2>
+                <h2>Add key phrases</h2>
               </div>
               {keywordsSaved ? (
                 <ToneBadge tone="positive">{parsedKeywords.length} saved</ToneBadge>
               ) : (
-                <ToneBadge tone="neutral">{parsedKeywords.length} keyword{parsedKeywords.length !== 1 ? 's' : ''}</ToneBadge>
+                <ToneBadge tone="neutral">{parsedKeywords.length} key phrase{parsedKeywords.length !== 1 ? 's' : ''}</ToneBadge>
               )}
             </div>
-            <p className="supporting-copy">Enter the search queries you want to track. One keyword per line.</p>
+            <p className="supporting-copy">Enter the search queries you want to track. One per line.</p>
             {keywordsSaved ? (
               <div className="compact-stack">
                 <ul className="detail-list">
@@ -1776,7 +2333,7 @@ function SetupPage({
             ) : (
               <div className="compact-stack">
                 <div className="setup-field">
-                  <label className="setup-label" htmlFor="keywords">Keywords (one per line)</label>
+                  <label className="setup-label" htmlFor="keywords">Key phrases (one per line)</label>
                   <textarea
                     id="keywords"
                     className="setup-textarea"
@@ -1790,7 +2347,7 @@ function SetupPage({
                 <div className="setup-nav">
                   <Button type="button" variant="outline" onClick={goBack}>Back</Button>
                   <Button type="button" disabled={parsedKeywords.length === 0 || keywordsSaving} onClick={handleSaveKeywords}>
-                    {keywordsSaving ? 'Saving...' : `Save ${parsedKeywords.length} keyword${parsedKeywords.length !== 1 ? 's' : ''}`}
+                    {keywordsSaving ? 'Saving...' : `Save ${parsedKeywords.length} key phrase${parsedKeywords.length !== 1 ? 's' : ''}`}
                   </Button>
                 </div>
               </div>
@@ -1808,7 +2365,7 @@ function SetupPage({
               </div>
               {competitorsSaved ? <ToneBadge tone="positive">Saved</ToneBadge> : null}
             </div>
-            <p className="supporting-copy">Domains that compete for the same keywords. One per line.</p>
+            <p className="supporting-copy">Domains that compete for the same key phrases. One per line.</p>
             {competitorsSaved ? (
               <div className="compact-stack">
                 <ul className="detail-list">
@@ -1891,7 +2448,7 @@ function SetupPage({
       <div className="page-header">
         <div className="page-header-left">
           <h1 className="page-title">Setup</h1>
-          <p className="page-subtitle">Create a project, import keywords, add competitors, and launch the first run.</p>
+          <p className="page-subtitle">Create a project, add key phrases, add competitors, and launch the first run.</p>
         </div>
       </div>
 
@@ -2645,7 +3202,7 @@ export function App({
                 {runDetail.snapshots.map((snap) => (
                   <div key={snap.id} className="rounded-lg border border-zinc-800/60 bg-zinc-900/30 p-3">
                     <div className="flex items-center justify-between gap-2 mb-1">
-                      <p className="text-sm font-medium text-zinc-200 truncate">{snap.keyword ?? 'Unknown keyword'}</p>
+                      <p className="text-sm font-medium text-zinc-200 truncate">{snap.keyword ?? 'Unknown key phrase'}</p>
                       <div className="flex items-center gap-1.5">
                         <ProviderBadge provider={snap.provider} />
                         <Badge variant={snap.citationState === 'cited' ? 'success' : 'neutral'}>
@@ -2688,14 +3245,14 @@ export function App({
                 {runDetail.status === 'running' && (
                   <div className="flex items-center gap-2 p-3 text-sm text-zinc-500">
                     <span className="inline-block h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
-                    Querying remaining keywords...
+                    Querying remaining key phrases...
                   </div>
                 )}
               </div>
             ) : runDetail && runDetail.status === 'running' ? (
               <div className="flex items-center gap-2 p-3 text-sm text-zinc-500">
                 <span className="inline-block h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
-                Waiting for first keyword result...
+                Waiting for first key phrase result...
               </div>
             ) : runDetail && runDetail.status === 'queued' ? (
               <div className="flex items-center gap-2 p-3 text-sm text-zinc-500">

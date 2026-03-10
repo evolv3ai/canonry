@@ -1,4 +1,4 @@
-import type { GroundingSource } from '@ainyc/aeo-platform-contracts'
+import type { GroundingSource, ScheduleDto, NotificationDto } from '@ainyc/aeo-platform-contracts'
 
 export type { GroundingSource }
 
@@ -226,5 +226,61 @@ export function updateProviderConfig(provider: string, body: {
   return apiFetch(`/settings/providers/${encodeURIComponent(provider)}`, {
     method: 'PUT',
     body: JSON.stringify(body),
+  })
+}
+
+export type ApiSchedule = ScheduleDto
+
+export async function fetchSchedule(project: string): Promise<ApiSchedule | null> {
+  try {
+    return await apiFetch<ApiSchedule>(`/projects/${encodeURIComponent(project)}/schedule`)
+  } catch (e) {
+    if (e instanceof Error && e.message.includes('404')) return null
+    throw e
+  }
+}
+
+export function saveSchedule(project: string, body: {
+  preset?: string
+  cron?: string
+  timezone?: string
+  providers?: string[]
+  enabled?: boolean
+}): Promise<ApiSchedule> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/schedule`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function removeSchedule(project: string): Promise<void> {
+  await apiFetch(`/projects/${encodeURIComponent(project)}/schedule`, { method: 'DELETE', body: '{}' })
+}
+
+export type ApiNotification = Omit<NotificationDto, 'webhookSecret'>
+
+export function listNotifications(project: string): Promise<ApiNotification[]> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/notifications`)
+}
+
+export function addNotification(project: string, body: {
+  channel: string
+  url: string
+  events: string[]
+}): Promise<ApiNotification> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/notifications`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function removeNotification(project: string, id: string): Promise<void> {
+  await apiFetch(`/projects/${encodeURIComponent(project)}/notifications/${encodeURIComponent(id)}`, { method: 'DELETE', body: '{}' })
+}
+
+export function sendTestNotification(project: string, id: string): Promise<{ status: number; ok: boolean }> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/notifications/${encodeURIComponent(id)}/test`, {
+    method: 'POST',
+    body: '{}',
   })
 }
