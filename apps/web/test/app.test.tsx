@@ -27,7 +27,7 @@ test('overview route renders the premium portfolio dashboard', () => {
   const html = renderApp('/')
 
   assert.match(html, /Portfolio/)
-  assert.match(html, /Portfolio ranking/)
+  assert.match(html, /Visibility and execution state/)
   assert.match(html, /Infrastructure/)
   assert.match(html, /Citypoint Dental NYC/)
   assert.match(html, /Harbor Legal Group/)
@@ -56,7 +56,7 @@ test('settings route renders provider state, quota summary, and service health',
   const html = renderApp('/settings')
 
   assert.match(html, /Settings/)
-  assert.match(html, /Conservative defaults/)
+  assert.match(html, /Rate limit/)
   assert.match(html, /Service health/)
   assert.match(html, /Gemini/)
 })

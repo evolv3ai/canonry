@@ -6,14 +6,14 @@ import { unsupportedKind, runInProgress } from '@ainyc/aeo-platform-contracts'
 import { resolveProject, writeAuditLog } from './helpers.js'
 
 export interface RunRoutesOptions {
-  onRunCreated?: (runId: string, projectId: string) => void
+  onRunCreated?: (runId: string, projectId: string, providers?: string[]) => void
 }
 
 export async function runRoutes(app: FastifyInstance, opts: RunRoutesOptions) {
   // POST /projects/:name/runs — trigger a run
   app.post<{
     Params: { name: string }
-    Body: { kind?: string; trigger?: string }
+    Body: { kind?: string; trigger?: string; providers?: string[] }
   }>('/projects/:name/runs', async (request, reply) => {
     const project = resolveProjectSafe(app, request.params.name, reply)
     if (!project) return
@@ -27,6 +27,15 @@ export async function runRoutes(app: FastifyInstance, opts: RunRoutesOptions) {
     const now = new Date().toISOString()
     const runId = crypto.randomUUID()
     const trigger = request.body?.trigger ?? 'manual'
+    const rawProviders = request.body?.providers
+    const validProviders = ['gemini', 'openai', 'claude'] as const
+    if (rawProviders?.length) {
+      const invalid = rawProviders.filter(p => !(validProviders as readonly string[]).includes(p))
+      if (invalid.length) {
+        return reply.status(400).send({ error: { code: 'VALIDATION_ERROR', message: `Invalid provider(s): ${invalid.join(', ')}. Must be one of: ${validProviders.join(', ')}` } })
+      }
+    }
+    const providers = rawProviders?.length ? rawProviders : undefined
 
     // Check and insert atomically to prevent duplicate concurrent runs
     const txResult = app.db.transaction((tx) => {
@@ -73,7 +82,7 @@ export async function runRoutes(app: FastifyInstance, opts: RunRoutesOptions) {
     const run = app.db.select().from(runs).where(eq(runs.id, runId)).get()!
 
     if (opts.onRunCreated) {
-      opts.onRunCreated(runId, project.id)
+      opts.onRunCreated(runId, project.id, providers)
     }
 
     return reply.status(201).send(formatRun(run))

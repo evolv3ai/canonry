@@ -125,9 +125,22 @@ export async function historyRoutes(app: FastifyInstance) {
       .where(inArray(querySnapshots.runId, [...runIds]))
       .all()
 
+    // Deduplicate to one entry per (runId, keywordId) before building transitions so that
+    // multi-provider runs don't produce spurious transition events within a single run.
+    // Prefer 'cited' when providers disagree within the same run.
+    const deduped = new Map<string, typeof allSnapshots[number]>()
+    for (const snap of allSnapshots) {
+      const key = `${snap.runId}:${snap.keywordId}`
+      const existing = deduped.get(key)
+      if (!existing || snap.citationState === 'cited') {
+        deduped.set(key, snap)
+      }
+    }
+    const dedupedSnapshots = [...deduped.values()]
+
     // Build per-keyword timeline
     const timeline = projectKeywords.map(kw => {
-      const kwSnapshots = allSnapshots
+      const kwSnapshots = dedupedSnapshots
         .filter(s => s.keywordId === kw.id)
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
 
@@ -199,9 +212,18 @@ export async function historyRoutes(app: FastifyInstance) {
       .where(eq(querySnapshots.runId, run2))
       .all()
 
-    // Build lookup by keyword id
-    const map1 = new Map(snaps1.map(s => [s.keywordId, s]))
-    const map2 = new Map(snaps2.map(s => [s.keywordId, s]))
+    // Build lookup by keyword id — prefer 'cited' when multiple providers gave different
+    // states for the same keyword within a run (same logic as the timeline deduplication)
+    const map1 = new Map<string | null, typeof snaps1[number]>()
+    for (const s of snaps1) {
+      const existing = map1.get(s.keywordId)
+      if (!existing || s.citationState === 'cited') map1.set(s.keywordId, s)
+    }
+    const map2 = new Map<string | null, typeof snaps2[number]>()
+    for (const s of snaps2) {
+      const existing = map2.get(s.keywordId)
+      if (!existing || s.citationState === 'cited') map2.set(s.keywordId, s)
+    }
 
     // Compute diff for all keywords present in either run
     const allKeywordIds = new Set([...map1.keys(), ...map2.keys()])
