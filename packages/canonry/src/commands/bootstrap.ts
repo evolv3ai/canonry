@@ -13,26 +13,35 @@ export async function bootstrapCommand(_opts?: { force?: boolean }): Promise<voi
   const hasProvider = providers?.gemini || providers?.openai || providers?.claude || providers?.local
 
   if (!hasProvider) {
-    throw new Error(
-      'Bootstrap requires at least one provider env var. Set GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or LOCAL_BASE_URL.',
+    console.warn(
+      'Warning: No provider env vars set (GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or LOCAL_BASE_URL). You can configure providers later via the dashboard.',
     )
   }
 
   const configDir = getConfigDir()
   const databasePath = env.databasePath || path.join(configDir, 'data.db')
   const existing = configExists()
+  const existingConfig = existing ? loadConfig() : undefined
 
   // Resolve API key: env var > existing config > generate new
   let rawApiKey: string
   let generatedApiKey: string | undefined
   if (env.apiKey) {
     rawApiKey = env.apiKey
-  } else if (existing) {
-    rawApiKey = loadConfig().apiKey
+  } else if (existingConfig) {
+    rawApiKey = existingConfig.apiKey
   } else {
     generatedApiKey = `cnry_${crypto.randomBytes(16).toString('hex')}`
     rawApiKey = generatedApiKey
   }
+
+  // Merge providers: env vars override, but preserve dashboard-configured
+  // providers that don't have a corresponding env var set
+  const mergedProviders = { ...existingConfig?.providers }
+  if (providers?.gemini) mergedProviders.gemini = providers.gemini
+  if (providers?.openai) mergedProviders.openai = providers.openai
+  if (providers?.claude) mergedProviders.claude = providers.claude
+  if (providers?.local) mergedProviders.local = providers.local
 
   const keyHash = crypto.createHash('sha256').update(rawApiKey).digest('hex')
   const keyPrefix = rawApiKey.slice(0, 9)
@@ -50,10 +59,10 @@ export async function bootstrapCommand(_opts?: { force?: boolean }): Promise<voi
   }).run()
 
   saveConfig({
-    apiUrl: env.apiUrl || `http://localhost:${process.env.CANONRY_PORT || '4100'}`,
+    apiUrl: env.apiUrl || existingConfig?.apiUrl || `http://localhost:${process.env.CANONRY_PORT || '4100'}`,
     database: databasePath,
     apiKey: rawApiKey,
-    providers,
+    providers: mergedProviders,
   })
 
   console.log(`Bootstrap complete. Config saved to ${getConfigPath()}`)

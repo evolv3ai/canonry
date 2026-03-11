@@ -2163,7 +2163,7 @@ function SetupPage({
   const parsedKeywords = keywordsText.split('\n').map(k => k.trim()).filter(Boolean)
   const parsedCompetitors = competitorsText.split('\n').map(c => c.trim()).filter(Boolean)
 
-  const allHealthy = model.healthChecks.every((c) => c.state === 'ready')
+  const apiReady = model.healthChecks.some((c) => c.id === 'api' && c.state === 'ready')
 
   const handleCreateProject = async () => {
     if (!slug || !domain) return
@@ -2258,6 +2258,15 @@ function SetupPage({
                   <div>
                     <p className="run-row-title">{check.label}</p>
                     <p className="supporting-copy">{check.detail}</p>
+                    {check.id === 'provider' && check.state !== 'ready' && (
+                      <button
+                        type="button"
+                        className="text-emerald-400 hover:text-emerald-300 text-sm mt-1 underline underline-offset-2 cursor-pointer bg-transparent border-none p-0"
+                        onClick={() => onNavigate('/settings')}
+                      >
+                        Configure providers
+                      </button>
+                    )}
                   </div>
                   <ToneBadge tone={check.state === 'ready' ? 'positive' : 'caution'}>
                     {check.state === 'ready' ? 'Ready' : 'Attention'}
@@ -2267,7 +2276,7 @@ function SetupPage({
             </div>
             <div className="setup-nav">
               <span />
-              <Button type="button" disabled={!allHealthy} onClick={() => setStep(1)}>
+              <Button type="button" disabled={!apiReady} onClick={() => setStep(1)}>
                 Continue
               </Button>
             </div>
@@ -2416,9 +2425,14 @@ function SetupPage({
                 {competitorsError ? <p className="text-rose-400 text-sm">{competitorsError}</p> : null}
                 <div className="setup-nav">
                   <Button type="button" variant="outline" onClick={goBack}>Back</Button>
-                  <Button type="button" disabled={parsedCompetitors.length === 0 || competitorsSaving} onClick={handleSaveCompetitors}>
-                    {competitorsSaving ? 'Saving...' : `Save ${parsedCompetitors.length} competitor${parsedCompetitors.length !== 1 ? 's' : ''}`}
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button type="button" variant="outline" onClick={() => setStep(4)}>
+                      Skip
+                    </Button>
+                    <Button type="button" disabled={parsedCompetitors.length === 0 || competitorsSaving} onClick={handleSaveCompetitors}>
+                      {competitorsSaving ? 'Saving...' : `Save ${parsedCompetitors.length} competitor${parsedCompetitors.length !== 1 ? 's' : ''}`}
+                    </Button>
+                  </div>
                 </div>
               </div>
             )}
@@ -2769,6 +2783,21 @@ export function App({
     if (initialDashboard) return
     void refreshData()
   }, [initialDashboard, refreshData])
+
+  // Poll for dashboard updates while any run is active (queued/running)
+  const hasActiveRun = dashboard?.runs.some(
+    r => r.status === 'running' || r.status === 'queued',
+  ) ?? false
+
+  useEffect(() => {
+    if (!hasActiveRun) return
+
+    const interval = setInterval(() => {
+      void refreshData()
+    }, 3000)
+
+    return () => clearInterval(interval)
+  }, [hasActiveRun, refreshData])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
