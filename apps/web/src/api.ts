@@ -292,3 +292,17 @@ export function generateKeywords(projectName: string, provider: string, count?: 
     body: JSON.stringify({ provider, count }),
   })
 }
+
+export interface ApiApplyResult {
+  id: string
+  name: string
+  displayName: string
+  configRevision: number
+}
+
+export function applyProjectConfig(config: object): Promise<ApiApplyResult> {
+  return apiFetch('/apply', {
+    method: 'POST',
+    body: JSON.stringify(config),
+  })
+}
