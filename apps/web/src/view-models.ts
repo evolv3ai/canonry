@@ -106,7 +106,7 @@ export interface CitationInsightVm {
 export interface AffectedPhrase {
   keyword: string
   evidenceId: string
-  providers: string[]
+  provider?: string
   citationState: CitationState
 }
 

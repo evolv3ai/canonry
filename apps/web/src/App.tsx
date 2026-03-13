@@ -662,7 +662,7 @@ function InsightSignals({
                       <CitationBadge state={ap.citationState} />
                       <span className="text-sm text-zinc-200 truncate">{ap.keyword}</span>
                       <div className="hidden sm:flex gap-1">
-                        {ap.providers.map(p => <ProviderBadge key={p} provider={p} />)}
+                        {ap.provider && <ProviderBadge provider={ap.provider} />}
                       </div>
                     </div>
                     <button
@@ -3726,11 +3726,12 @@ async function loadDashboardData(): Promise<DashboardVm | null> {
           .filter(r => r.status === 'completed' || r.status === 'partial')
           .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 
-        const [kws, comps, timeline, latestRunDetail] = await Promise.all([
+        const [kws, comps, timeline, latestRunDetail, previousRunDetail] = await Promise.all([
           fetchKeywords(project.name).catch(() => []),
           fetchCompetitors(project.name).catch(() => []),
           fetchTimeline(project.name).catch(() => []),
           completedRuns[0] ? fetchRunDetail(completedRuns[0].id).catch(() => null) : Promise.resolve(null),
+          completedRuns[1] ? fetchRunDetail(completedRuns[1].id).catch(() => null) : Promise.resolve(null),
         ])
 
         return {
@@ -3740,6 +3741,7 @@ async function loadDashboardData(): Promise<DashboardVm | null> {
           competitors: comps,
           timeline,
           latestRunDetail: latestRunDetail,
+          previousRunDetail: previousRunDetail,
         }
       }),
     )

@@ -422,7 +422,7 @@ const baseProjectCommandCenters: ProjectCommandCenterVm[] = [
         affectedPhrases: [{
           keyword: 'emergency dentist brooklyn',
           evidenceId: 'evidence_citypoint_emergency_gemini',
-          providers: ['gemini'],
+          provider: 'gemini',
           citationState: 'lost',
         }],
       },
@@ -435,7 +435,7 @@ const baseProjectCommandCenters: ProjectCommandCenterVm[] = [
         affectedPhrases: [{
           keyword: 'best invisalign dentist downtown brooklyn',
           evidenceId: 'evidence_citypoint_invisalign_openai',
-          providers: ['openai'],
+          provider: 'openai',
           citationState: 'emerging',
         }],
       },
@@ -448,7 +448,7 @@ const baseProjectCommandCenters: ProjectCommandCenterVm[] = [
         affectedPhrases: [{
           keyword: 'pediatric dentist brooklyn heights',
           evidenceId: 'evidence_citypoint_children_claude',
-          providers: ['claude', 'gemini'],
+          provider: 'claude',
           citationState: 'not-cited',
         }],
       },
@@ -561,7 +561,7 @@ const baseProjectCommandCenters: ProjectCommandCenterVm[] = [
         affectedPhrases: [{
           keyword: 'brooklyn personal injury lawyer',
           evidenceId: 'evidence_harbor_personal_injury',
-          providers: ['gemini'],
+          provider: 'gemini',
           citationState: 'cited',
         }],
       },
@@ -664,7 +664,7 @@ const baseProjectCommandCenters: ProjectCommandCenterVm[] = [
         affectedPhrases: [{
           keyword: 'knee replacement surgeon westchester',
           evidenceId: 'evidence_northstar_knee',
-          providers: ['openai'],
+          provider: 'openai',
           citationState: 'emerging',
         }],
       },
@@ -995,7 +995,7 @@ export function createDashboardFixture(options: DashboardFixtureOptions = {}): D
           .map(e => ({
             keyword: e.keyword,
             evidenceId: e.id,
-            providers: [e.provider].filter(Boolean),
+            provider: e.provider || undefined,
             citationState: e.citationState,
           })),
       })
