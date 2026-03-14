@@ -42,6 +42,7 @@ describe('api-routes', () => {
       payload: {
         displayName: 'My Site',
         canonicalDomain: 'example.com',
+        ownedDomains: ['docs.example.com'],
         country: 'US',
         language: 'en',
       },
@@ -51,6 +52,7 @@ describe('api-routes', () => {
     assert.equal(body.name, 'my-site')
     assert.equal(body.displayName, 'My Site')
     assert.equal(body.canonicalDomain, 'example.com')
+    assert.deepEqual(body.ownedDomains, ['docs.example.com'])
   })
 
   it('GET /api/v1/projects lists projects', async () => {
@@ -60,6 +62,7 @@ describe('api-routes', () => {
     assert(Array.isArray(body))
     assert.equal(body.length, 1)
     assert.equal(body[0].name, 'my-site')
+    assert.deepEqual(body[0].ownedDomains, ['docs.example.com'])
   })
 
   it('GET /api/v1/openapi.json returns the API spec', async () => {
@@ -83,6 +86,7 @@ describe('api-routes', () => {
     assert.equal(res.statusCode, 200)
     const body = JSON.parse(res.payload)
     assert.equal(body.name, 'my-site')
+    assert.deepEqual(body.ownedDomains, ['docs.example.com'])
   })
 
   it('GET /api/v1/projects/:name returns 404 for unknown', async () => {
@@ -128,5 +132,122 @@ describe('api-routes', () => {
     const body = JSON.parse(res.payload)
     assert(Array.isArray(body))
     assert(body.length > 0)
+  })
+
+  it('PUT /api/v1/projects/:name updates project settings', async () => {
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/projects/my-site',
+      payload: {
+        displayName: 'Updated Site',
+        canonicalDomain: 'updated.com',
+        ownedDomains: ['docs.updated.com', 'blog.updated.com'],
+        country: 'GB',
+        language: 'en-gb',
+      },
+    })
+    assert.equal(res.statusCode, 200)
+    const body = JSON.parse(res.payload)
+    assert.equal(body.name, 'my-site')
+    assert.equal(body.displayName, 'Updated Site')
+    assert.equal(body.canonicalDomain, 'updated.com')
+    assert.deepEqual(body.ownedDomains, ['docs.updated.com', 'blog.updated.com'])
+    assert.equal(body.country, 'GB')
+    assert.equal(body.language, 'en-gb')
+
+    // Verify GET returns updated values
+    const getRes = await app.inject({ method: 'GET', url: '/api/v1/projects/my-site' })
+    assert.equal(getRes.statusCode, 200)
+    const getBody = JSON.parse(getRes.payload)
+    assert.equal(getBody.displayName, 'Updated Site')
+    assert.equal(getBody.canonicalDomain, 'updated.com')
+    assert.deepEqual(getBody.ownedDomains, ['docs.updated.com', 'blog.updated.com'])
+    assert.equal(getBody.country, 'GB')
+    assert.equal(getBody.language, 'en-gb')
+  })
+
+  it('PUT /api/v1/projects/:name with empty ownedDomains clears them', async () => {
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/projects/my-site',
+      payload: {
+        displayName: 'Updated Site',
+        canonicalDomain: 'updated.com',
+        ownedDomains: [],
+        country: 'GB',
+        language: 'en-gb',
+      },
+    })
+    assert.equal(res.statusCode, 200)
+    const body = JSON.parse(res.payload)
+    assert.deepEqual(body.ownedDomains, [])
+  })
+
+  it('PUT /api/v1/projects/:name without ownedDomains defaults to empty', async () => {
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/projects/my-site',
+      payload: {
+        displayName: 'Updated Site',
+        canonicalDomain: 'updated.com',
+        country: 'GB',
+        language: 'en-gb',
+      },
+    })
+    assert.equal(res.statusCode, 200)
+    const body = JSON.parse(res.payload)
+    assert.deepEqual(body.ownedDomains, [])
+  })
+
+  it('PUT /api/v1/projects/:name rejects ownedDomains with empty string elements', async () => {
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/projects/my-site',
+      payload: {
+        displayName: 'My Site',
+        canonicalDomain: 'example.com',
+        ownedDomains: ['docs.example.com', ''],
+        country: 'US',
+        language: 'en',
+      },
+    })
+    assert.equal(res.statusCode, 400)
+  })
+
+  it('PUT /api/v1/projects/:name preserves tags and providers when included', async () => {
+    // Seed a project with tags and providers
+    const createRes = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/projects/metadata-test',
+      payload: {
+        displayName: 'Metadata Test',
+        canonicalDomain: 'meta.example.com',
+        country: 'US',
+        language: 'en',
+        tags: ['seo', 'ai'],
+        providers: ['gemini', 'openai'],
+      },
+    })
+    assert.equal(createRes.statusCode, 201)
+
+    // Update only ownedDomains, passing tags and providers through (as the client now does)
+    const updateRes = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/projects/metadata-test',
+      payload: {
+        displayName: 'Metadata Test',
+        canonicalDomain: 'meta.example.com',
+        ownedDomains: ['docs.meta.example.com'],
+        country: 'US',
+        language: 'en',
+        tags: ['seo', 'ai'],
+        providers: ['gemini', 'openai'],
+      },
+    })
+    assert.equal(updateRes.statusCode, 200)
+    const body = JSON.parse(updateRes.payload)
+    assert.deepEqual(body.ownedDomains, ['docs.meta.example.com'])
+    assert.deepEqual(body.tags, ['seo', 'ai'])
+    assert.deepEqual(body.providers, ['gemini', 'openai'])
   })
 })

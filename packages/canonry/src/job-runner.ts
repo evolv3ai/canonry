@@ -3,6 +3,7 @@ import { eq, inArray } from 'drizzle-orm'
 import type { DatabaseClient } from '@ainyc/canonry-db'
 import { runs, keywords, competitors, projects, querySnapshots, usageCounters } from '@ainyc/canonry-db'
 import type { ProviderName, NormalizedQueryResult } from '@ainyc/canonry-contracts'
+import { effectiveDomains, normalizeProjectDomain } from '@ainyc/canonry-contracts'
 import type { ProviderRegistry, RegisteredProvider } from './provider-registry.js'
 import { trackEvent } from './telemetry.js'
 
@@ -133,10 +134,15 @@ export class JobRunner {
               config.quotaPolicy.maxRequestsPerMinute,
             )
 
+            const allDomains = effectiveDomains({
+              canonicalDomain: project.canonicalDomain,
+              ownedDomains: JSON.parse(project.ownedDomains || '[]') as string[],
+            })
+
             const raw = await adapter.executeTrackedQuery(
               {
                 keyword: kw.keyword,
-                canonicalDomains: [project.canonicalDomain],
+                canonicalDomains: allDomains,
                 competitorDomains,
               },
               config,
@@ -144,8 +150,8 @@ export class JobRunner {
 
             const normalized = adapter.normalizeResult(raw)
 
-            console.log(`[JobRunner] ${providerName}: "${kw.keyword}" citedDomains=${JSON.stringify(normalized.citedDomains)}, groundingSources=${JSON.stringify(normalized.groundingSources.map(s => s.uri))}, canonical="${project.canonicalDomain}"`)
-            const citationState = determineCitationState(normalized, project.canonicalDomain)
+            console.log(`[JobRunner] ${providerName}: "${kw.keyword}" citedDomains=${JSON.stringify(normalized.citedDomains)}, groundingSources=${JSON.stringify(normalized.groundingSources.map(s => s.uri))}, domains=${JSON.stringify(allDomains)}`)
+            const citationState = determineCitationState(normalized, allDomains)
             const overlap = computeCompetitorOverlap(normalized, competitorDomains)
 
             this.db.insert(querySnapshots).values({
@@ -312,53 +318,45 @@ function getCurrentPeriod(): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
 }
 
-/** Normalize a canonical domain that may be stored as a full URL (e.g. "https://www.ainyc.ai") to a bare domain ("ainyc.ai") */
-function normalizeDomain(input: string): string {
-  let domain = input
-  try {
-    if (domain.includes('://')) {
-      domain = new URL(domain).hostname
-    }
-  } catch {
-    // not a URL, use as-is
-  }
-  return domain.replace(/^www\./, '')
-}
-
 function domainMatches(domain: string, canonicalDomain: string): boolean {
-  const normalized = normalizeDomain(canonicalDomain)
-  const d = normalizeDomain(domain)
+  const normalized = normalizeProjectDomain(canonicalDomain)
+  const d = normalizeProjectDomain(domain)
   return d === normalized || d.endsWith(`.${normalized}`)
 }
 
 function determineCitationState(
   normalized: NormalizedQueryResult,
-  canonicalDomain: string,
+  domains: string[],
 ): 'cited' | 'not-cited' {
-  const bareDomain = normalizeDomain(canonicalDomain)
+  for (const canonicalDomain of domains) {
+    const bareDomain = normalizeProjectDomain(canonicalDomain)
 
-  // Check extracted cited domains
-  if (normalized.citedDomains.some(d => domainMatches(d, bareDomain))) {
-    return 'cited'
-  }
-
-  // Also check grounding source URIs and titles directly
-  const lowerDomain = bareDomain.toLowerCase()
-  for (const source of normalized.groundingSources) {
-    try {
-      const uri = source.uri.toLowerCase()
-      if (uri.includes(lowerDomain)) {
-        return 'cited'
-      }
-    } catch {
-      // ignore
+    // Check extracted cited domains
+    if (normalized.citedDomains.some(d => domainMatches(d, bareDomain))) {
+      return 'cited'
     }
-    // Gemini proxy URLs use base64 encoding, so the domain won't appear in the URI.
-    // The title field often contains the bare domain (e.g. "ainyc.ai").
-    if (source.title) {
-      const titleLower = source.title.toLowerCase().replace(/^www\./, '')
-      if (titleLower === lowerDomain || titleLower.endsWith(`.${lowerDomain}`)) {
-        return 'cited'
+
+    // Also check grounding source URIs and titles directly
+    const lowerDomain = bareDomain.toLowerCase()
+    for (const source of normalized.groundingSources) {
+      try {
+        // Only use substring fallback for domains that look like real FQDNs (contain a dot).
+        // Short or generic owned-domain entries (e.g. "ai", "app") would otherwise match
+        // the vast majority of URLs, producing false-positive citations.
+        const uri = source.uri.toLowerCase()
+        if (lowerDomain.includes('.') && uri.includes(lowerDomain)) {
+          return 'cited'
+        }
+      } catch {
+        // ignore
+      }
+      // Gemini proxy URLs use base64 encoding, so the domain won't appear in the URI.
+      // The title field often contains the bare domain (e.g. "ainyc.ai").
+      if (source.title) {
+        const titleLower = source.title.toLowerCase().replace(/^www\./, '')
+        if (titleLower === lowerDomain || titleLower.endsWith(`.${lowerDomain}`)) {
+          return 'cited'
+        }
       }
     }
   }
