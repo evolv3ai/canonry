@@ -219,12 +219,16 @@ function buildEvidenceFromTimeline(
         const snap = snapshotsByKey.get(`${entry.keyword}::${provider}`)
         if (!snap && providers.length > 1) continue
 
-        // Use per-provider timeline when available for accurate streaks and transitions
+        // Prefer model-scoped history for accurate streaks; fall back to provider-level then keyword-level
+        const model = snap?.model ?? null
+        const modelKey = model ? `${provider}:${model}` : null
+        const modelHistory = modelKey ? entry.modelRuns?.[modelKey] : undefined
         const providerHistory = entry.providerRuns?.[provider]
-        const hasProviderHistory = providerHistory && providerHistory.length > 0
+        const effectiveHistory = (modelHistory?.length ? modelHistory : null)
+          ?? (providerHistory?.length ? providerHistory : null)
 
-        const effectiveTransition = hasProviderHistory
-          ? providerHistory.at(-1)!.transition
+        const effectiveTransition = effectiveHistory
+          ? effectiveHistory.at(-1)!.transition
           : transition
 
         const snapState: CitationState = effectiveTransition === 'lost' ? 'lost'
@@ -233,17 +237,18 @@ function buildEvidenceFromTimeline(
             ? (snap.citationState === 'cited' ? 'cited' : 'not-cited')
             : citationState
 
-        const streak = hasProviderHistory
-          ? computeStreak(providerHistory)
+        const streak = effectiveHistory
+          ? computeStreak(effectiveHistory)
           : computeStreak(entry.runs)
 
-        const runHistory = (hasProviderHistory ? providerHistory : entry.runs)
+        const runHistory = (effectiveHistory ?? entry.runs)
           .map(r => ({ runId: r.runId, citationState: r.citationState, createdAt: r.createdAt }))
 
         results.push({
           id: `evidence_${projectName}_${idx++}`,
           keyword: entry.keyword,
           provider: snap?.provider ?? provider,
+          model: snap?.model ?? null,
           citationState: snapState,
           changeLabel: changeLabel(effectiveTransition, streak),
           answerSnippet: snap?.answerText ?? '',
@@ -266,6 +271,7 @@ function buildEvidenceFromTimeline(
       id: `evidence_${projectName}_${idx++}`,
       keyword: kw.keyword,
       provider: '',
+      model: null,
       citationState: 'pending',
       changeLabel: 'Awaiting first run',
       answerSnippet: '',
@@ -574,19 +580,22 @@ export function buildProjectCommandCenter(data: ProjectData): ProjectCommandCent
   const sortedRuns = [...data.runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   const runItems = sortedRuns.map(r => toRunListItem(r, data.project.displayName || data.project.name))
 
-  // Compute per-provider scores
-  const providerGroups = new Map<string, { cited: number; total: number }>()
+  // Compute per-model scores (grouped by provider+model)
+  const modelGroups = new Map<string, { provider: string; model: string | null; cited: number; total: number }>()
   for (const snap of snapshots) {
     const p = snap.provider || 'gemini'
-    const group = providerGroups.get(p) ?? { cited: 0, total: 0 }
+    const m = snap.model ?? null
+    const key = `${p}::${m ?? 'unknown'}`
+    const group = modelGroups.get(key) ?? { provider: p, model: m, cited: 0, total: 0 }
     group.total++
     if (snap.citationState === 'cited') group.cited++
-    providerGroups.set(p, group)
+    modelGroups.set(key, group)
   }
-  const providerScores = [...providerGroups.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([provider, { cited, total }]) => ({
+  const providerScores = [...modelGroups.values()]
+    .sort((a, b) => a.provider.localeCompare(b.provider) || (a.model ?? '').localeCompare(b.model ?? ''))
+    .map(({ provider, model, cited, total }) => ({
       provider,
+      model,
       score: total > 0 ? Math.round((cited / total) * 100) : 0,
       cited,
       total,
