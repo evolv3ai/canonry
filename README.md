@@ -303,13 +303,20 @@ docker run --rm \
   canonry
 ```
 
-GitHub Actions can publish the same root image to Docker Hub. Configure these repository settings first:
+Published container images are available on Docker Hub:
 
-- Secret `DOCKERHUB_USERNAME`
-- Secret `DOCKERHUB_TOKEN`
-- Optional repository variable `DOCKERHUB_REPOSITORY` if you want something other than `<DOCKERHUB_USERNAME>/canonry`
+- [Repository overview](https://hub.docker.com/repository/docker/arberx/canonry/general)
+- [Available tags](https://hub.docker.com/repository/docker/arberx/canonry/tags)
 
-`.github/workflows/ci.yml` now builds and boots the container on pushes and PRs, and `.github/workflows/publish.yml` pushes `latest` plus `sha-<commit>` tags on `main`. When `packages/canonry/package.json` changes version, the publish workflow also pushes that semver tag and publishes the npm package.
+```bash
+docker pull arberx/canonry:latest
+```
+
+The same image is also published to GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/ainyc/canonry:latest
+```
 
 Keep the container to a single replica and mount persistent storage at `/data` so SQLite and `config.yaml` survive restarts.
 
