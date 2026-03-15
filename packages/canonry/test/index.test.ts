@@ -59,10 +59,14 @@ describe('canonry', () => {
     const originalGeminiApiKey = process.env.GEMINI_API_KEY
     const originalOpenaiApiKey = process.env.OPENAI_API_KEY
     const originalCanonryApiKey = process.env.CANONRY_API_KEY
+    const originalGoogleClientId = process.env.GOOGLE_CLIENT_ID
+    const originalGoogleClientSecret = process.env.GOOGLE_CLIENT_SECRET
 
     process.env.CANONRY_CONFIG_DIR = tmpDir
     process.env.GEMINI_API_KEY = 'test-gemini-key'
     process.env.CANONRY_API_KEY = 'cnry_bootstrap_key'
+    process.env.GOOGLE_CLIENT_ID = 'google-client-id'
+    process.env.GOOGLE_CLIENT_SECRET = 'google-client-secret'
 
     try {
       await bootstrapCommand({ force: true })
@@ -71,6 +75,8 @@ describe('canonry', () => {
       assert.equal(config.database, path.join(tmpDir, 'data.db'))
       assert.equal(config.apiKey, 'cnry_bootstrap_key')
       assert.equal(config.providers?.gemini?.apiKey, 'test-gemini-key')
+      assert.equal(config.google?.clientId, 'google-client-id')
+      assert.equal(config.google?.clientSecret, 'google-client-secret')
 
       let db = createClient(config.database)
       let keys = db.select().from(apiKeys).all()
@@ -102,6 +108,8 @@ describe('canonry', () => {
       restoreEnvVar('GEMINI_API_KEY', originalGeminiApiKey)
       restoreEnvVar('OPENAI_API_KEY', originalOpenaiApiKey)
       restoreEnvVar('CANONRY_API_KEY', originalCanonryApiKey)
+      restoreEnvVar('GOOGLE_CLIENT_ID', originalGoogleClientId)
+      restoreEnvVar('GOOGLE_CLIENT_SECRET', originalGoogleClientSecret)
       fs.rmSync(tmpDir, { recursive: true, force: true })
     }
   })
@@ -134,6 +142,7 @@ describe('canonry', () => {
         geminiApiKey: 'test-key',
       },
       db,
+      logger: false,
     })
 
     try {
@@ -174,6 +183,7 @@ describe('canonry', () => {
         geminiApiKey: 'test-key',
       },
       db,
+      logger: false,
     })
 
     try {
@@ -239,6 +249,7 @@ describe('canonry', () => {
         geminiApiKey: 'test-key',
       },
       db,
+      logger: false,
     })
 
     try {
@@ -363,6 +374,62 @@ describe('canonry', () => {
     )
   })
 
+  it('settings/google persists Google OAuth credentials to local config', async () => {
+    const tmpDir = path.join(os.tmpdir(), `canonry-google-settings-${crypto.randomUUID()}`)
+    fs.mkdirSync(tmpDir, { recursive: true })
+
+    const originalConfigDir = process.env.CANONRY_CONFIG_DIR
+    process.env.CANONRY_CONFIG_DIR = tmpDir
+
+    const dbPath = path.join(tmpDir, 'test.db')
+    const db = createClient(dbPath)
+    migrate(db)
+
+    const rawKey = `cnry_${crypto.randomBytes(16).toString('hex')}`
+    const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex')
+    db.insert(apiKeys).values({
+      id: crypto.randomUUID(),
+      name: 'test',
+      keyHash,
+      keyPrefix: rawKey.slice(0, 9),
+      scopes: '["*"]',
+      createdAt: new Date().toISOString(),
+    }).run()
+
+    const app = await createServer({
+      config: {
+        apiUrl: 'http://localhost:4100',
+        database: dbPath,
+        apiKey: rawKey,
+      },
+      db,
+      logger: false,
+    })
+
+    try {
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/v1/settings/google',
+        headers: { authorization: `Bearer ${rawKey}` },
+        payload: {
+          clientId: 'google-client-id',
+          clientSecret: 'google-client-secret',
+        },
+      })
+
+      assert.equal(res.statusCode, 200)
+      assert.deepEqual(JSON.parse(res.body), { configured: true })
+
+      const config = loadConfig()
+      assert.equal(config.google?.clientId, 'google-client-id')
+      assert.equal(config.google?.clientSecret, 'google-client-secret')
+    } finally {
+      await app.close()
+      restoreEnvVar('CANONRY_CONFIG_DIR', originalConfigDir)
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })
+
   it('health endpoint returns ok', async () => {
     const tmpDir = path.join(os.tmpdir(), `canonry-test-${crypto.randomUUID()}`)
     fs.mkdirSync(tmpDir, { recursive: true })
@@ -390,6 +457,7 @@ describe('canonry', () => {
         geminiApiKey: 'test-key',
       },
       db,
+      logger: false,
     })
 
     try {
@@ -433,6 +501,7 @@ describe('canonry', () => {
         geminiApiKey: 'test-key',
       },
       db,
+      logger: false,
     })
 
     try {
