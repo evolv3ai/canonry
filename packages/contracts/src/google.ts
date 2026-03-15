@@ -45,3 +45,25 @@ export type GscUrlInspectionDto = z.infer<typeof gscUrlInspectionDtoSchema>
 
 export const indexTransitionSchema = z.enum(['stable', 'reindexed', 'deindexed', 'still-missing', 'new'])
 export type IndexTransition = z.infer<typeof indexTransitionSchema>
+
+export const gscDeindexedRowSchema = z.object({
+  url: z.string(),
+  previousState: z.string().nullable(),
+  currentState: z.string().nullable(),
+  transitionDate: z.string(),
+})
+
+export const gscCoverageSummaryDtoSchema = z.object({
+  summary: z.object({
+    total: z.number(),
+    indexed: z.number(),
+    notIndexed: z.number(),
+    deindexed: z.number(),
+    percentage: z.number(),
+  }),
+  lastInspectedAt: z.string().nullable(),
+  indexed: z.array(gscUrlInspectionDtoSchema).default([]),
+  notIndexed: z.array(gscUrlInspectionDtoSchema).default([]),
+  deindexed: z.array(gscDeindexedRowSchema).default([]),
+})
+export type GscCoverageSummaryDto = z.infer<typeof gscCoverageSummaryDtoSchema>

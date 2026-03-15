@@ -1,4 +1,4 @@
-import type { GroundingSource, ScheduleDto, NotificationDto } from '@ainyc/canonry-contracts'
+import type { GroundingSource, ScheduleDto, NotificationDto, GscCoverageSummaryDto } from '@ainyc/canonry-contracts'
 
 export type { GroundingSource }
 
@@ -526,4 +526,17 @@ export function fetchGscInspections(
 
 export function fetchGscDeindexed(project: string): Promise<ApiGscDeindexedRow[]> {
   return apiFetch(`/projects/${encodeURIComponent(project)}/google/gsc/deindexed`)
+}
+
+export type { GscCoverageSummaryDto as ApiGscCoverageSummary }
+
+export function fetchGscCoverage(project: string): Promise<GscCoverageSummaryDto> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/google/gsc/coverage`)
+}
+
+export function triggerInspectSitemap(project: string, opts?: { sitemapUrl?: string }): Promise<ApiRun> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/google/gsc/inspect-sitemap`, {
+    method: 'POST',
+    body: JSON.stringify(opts ?? {}),
+  })
 }

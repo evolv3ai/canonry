@@ -60,6 +60,7 @@ export interface ApiRoutesOptions {
   /** Public URL for OAuth redirect URIs (overrides auto-detect from request headers) */
   publicUrl?: string
   onGscSyncRequested?: GoogleRoutesOptions['onGscSyncRequested']
+  onInspectSitemapRequested?: GoogleRoutesOptions['onInspectSitemapRequested']
 }
 
 export async function apiRoutes(app: FastifyInstance, opts: ApiRoutesOptions) {
@@ -112,6 +113,7 @@ export async function apiRoutes(app: FastifyInstance, opts: ApiRoutesOptions) {
       googleStateSecret: opts.googleStateSecret,
       publicUrl: opts.publicUrl,
       onGscSyncRequested: opts.onGscSyncRequested,
+      onInspectSitemapRequested: opts.onInspectSitemapRequested,
     } satisfies GoogleRoutesOptions)
   }, { prefix: '/api/v1' })
 }
