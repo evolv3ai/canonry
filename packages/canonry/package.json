@@ -1,6 +1,6 @@
 {
   "name": "@ainyc/canonry",
-  "version": "1.15.2",
+  "version": "1.15.3",
   "type": "module",
   "description": "The ultimate open-source AEO monitoring tool - track how answer engines cite your domain",
   "license": "FSL-1.1-ALv2",
@@ -38,7 +38,7 @@
     "build:web": "tsx build-web.ts",
     "prepublishOnly": "cp ../../README.md ./README.md && pnpm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "tsx --test test/*.test.ts",
+    "test": "vitest run",
     "lint": "eslint src/ test/"
   },
   "dependencies": {
