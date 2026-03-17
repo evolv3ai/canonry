@@ -210,6 +210,12 @@ const MIGRATIONS = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_gsc_coverage_snap_project_date ON gsc_coverage_snapshots(project_id, date)`,
   `CREATE INDEX IF NOT EXISTS idx_gsc_coverage_snap_run ON gsc_coverage_snapshots(sync_run_id)`,
+  // v8: Location-aware sweeps — project locations + snapshot location tag
+  `ALTER TABLE projects ADD COLUMN locations TEXT NOT NULL DEFAULT '[]'`,
+  `ALTER TABLE projects ADD COLUMN default_location TEXT`,
+  `ALTER TABLE query_snapshots ADD COLUMN location TEXT`,
+  // v9: Add location column to runs for per-location run tracking
+  `ALTER TABLE runs ADD COLUMN location TEXT`,
 ]
 
 export function migrate(db: DatabaseClient) {
