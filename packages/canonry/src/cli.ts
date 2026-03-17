@@ -19,8 +19,9 @@ import { addNotification, listNotifications, removeNotification, testNotificatio
 import { telemetryCommand } from './commands/telemetry.js'
 import {
   googleConnect, googleDisconnect, googleStatus, googleProperties,
-  googleSetProperty, googleSync, googlePerformance, googleInspect,
+  googleSetProperty, googleSetSitemap, googleListSitemaps, googleSync, googlePerformance, googleInspect,
   googleInspections, googleDeindexed, googleCoverage, googleCoverageHistory, googleInspectSitemap,
+  googleDiscoverSitemaps,
 } from './commands/google.js'
 import { trackEvent, isTelemetryEnabled, isFirstRun, getOrCreateAnonymousId, showFirstRunNotice } from './telemetry.js'
 
@@ -79,6 +80,9 @@ Usage:
   canonry google status <project>     Show Google connection status
   canonry google properties <project> List available GSC properties
   canonry google set-property <project> <url>  Set GSC property URL
+  canonry google set-sitemap <project> <url>   Set GSC sitemap URL
+  canonry google list-sitemaps <project>       List submitted sitemaps from GSC (no run queued)
+  canonry google discover-sitemaps <project>   Auto-discover sitemaps from GSC and queue inspection (--wait)
   canonry google sync <project>       Sync GSC data (--days 30, --full, --wait)
   canonry google performance <project>  Show GSC search performance data
   canonry google inspect <project> <url>  Inspect a URL via GSC
@@ -899,6 +903,25 @@ async function main() {
             await googleSetProperty(project, propertyUrl)
             break
           }
+          case 'set-sitemap': {
+            const project = args[2]
+            const sitemapUrl = args[3]
+            if (!project || !sitemapUrl) {
+              console.error('Error: project name and sitemap URL are required')
+              process.exit(1)
+            }
+            await googleSetSitemap(project, sitemapUrl)
+            break
+          }
+          case 'list-sitemaps': {
+            const project = args[2]
+            if (!project) {
+              console.error('Error: project name is required')
+              process.exit(1)
+            }
+            await googleListSitemaps(project, { format })
+            break
+          }
           case 'sync': {
             const project = args[2]
             if (!project) {
@@ -1040,9 +1063,29 @@ async function main() {
             await googleDeindexed(project, format)
             break
           }
+          case 'discover-sitemaps': {
+            const project = args[2]
+            if (!project) {
+              console.error('Error: project name is required')
+              process.exit(1)
+            }
+            const { values: discoverValues } = parseArgs({
+              args: args.slice(3),
+              options: {
+                wait: { type: 'boolean', default: false },
+                format: { type: 'string' },
+              },
+              allowPositionals: false,
+            })
+            await googleDiscoverSitemaps(project, {
+              wait: discoverValues.wait ?? false,
+              format: discoverValues.format === 'json' ? 'json' : format,
+            })
+            break
+          }
           default:
             console.error(`Unknown google subcommand: ${subcommand ?? '(none)'}`)
-            console.log('Available: connect, disconnect, status, properties, set-property, sync, performance, inspect, inspect-sitemap, coverage, coverage-history, inspections, deindexed')
+            console.log('Available: connect, disconnect, status, properties, set-property, set-sitemap, list-sitemaps, discover-sitemaps, sync, performance, inspect, inspect-sitemap, coverage, coverage-history, inspections, deindexed')
             process.exit(1)
         }
         break

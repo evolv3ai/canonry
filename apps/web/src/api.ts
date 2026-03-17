@@ -467,6 +467,7 @@ export interface ApiGoogleConnection {
   domain: string
   connectionType: 'gsc' | 'ga4'
   propertyId: string | null
+  sitemapUrl: string | null
   scopes: string[]
   createdAt: string
   updatedAt: string
@@ -541,6 +542,13 @@ export function saveGoogleProperty(project: string, type: 'gsc' | 'ga4', propert
   })
 }
 
+export function saveSitemapUrl(project: string, type: 'gsc' | 'ga4', sitemapUrl: string): Promise<{ sitemapUrl: string }> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/google/connections/${encodeURIComponent(type)}/sitemap`, {
+    method: 'PUT',
+    body: JSON.stringify({ sitemapUrl }),
+  })
+}
+
 export function triggerGscSync(project: string, opts?: { days?: number; full?: boolean }): Promise<ApiRun> {
   return apiFetch(`/projects/${encodeURIComponent(project)}/google/gsc/sync`, {
     method: 'POST',
@@ -604,5 +612,28 @@ export function triggerInspectSitemap(project: string, opts?: { sitemapUrl?: str
   return apiFetch(`/projects/${encodeURIComponent(project)}/google/gsc/inspect-sitemap`, {
     method: 'POST',
     body: JSON.stringify(opts ?? {}),
+  })
+}
+
+export interface ApiGscSitemap {
+  path: string
+  lastSubmitted?: string
+  isPending?: boolean
+  isSitemapsIndex?: boolean
+  type?: string
+  lastDownloaded?: string
+  warnings?: string
+  errors?: string
+  contents?: Array<{ type: string; submitted: string; indexed: string }>
+}
+
+export function fetchGscSitemaps(project: string): Promise<{ sitemaps: ApiGscSitemap[] }> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/google/gsc/sitemaps`)
+}
+
+export function triggerDiscoverSitemaps(project: string): Promise<{ sitemaps: ApiGscSitemap[]; primarySitemapUrl: string; run: ApiRun }> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/google/gsc/discover-sitemaps`, {
+    method: 'POST',
+    body: '{}',
   })
 }

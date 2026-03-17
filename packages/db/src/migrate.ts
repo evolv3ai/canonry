@@ -216,6 +216,8 @@ const MIGRATIONS = [
   `ALTER TABLE query_snapshots ADD COLUMN location TEXT`,
   // v9: Add location column to runs for per-location run tracking
   `ALTER TABLE runs ADD COLUMN location TEXT`,
+  // v10: Add sitemapUrl to google_connections for persistent sitemap storage
+  `ALTER TABLE google_connections ADD COLUMN sitemap_url TEXT`,
 ]
 
 export function migrate(db: DatabaseClient) {

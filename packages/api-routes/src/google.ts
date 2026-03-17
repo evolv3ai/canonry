@@ -9,6 +9,7 @@ import {
   exchangeCode,
   refreshAccessToken,
   listSites,
+  listSitemaps,
   inspectUrl as gscInspectUrl,
   GSC_SCOPE,
 } from '@ainyc/canonry-integration-google'
@@ -17,6 +18,7 @@ export interface GoogleConnectionRecord {
   domain: string
   connectionType: 'gsc' | 'ga4'
   propertyId?: string | null
+  sitemapUrl?: string | null
   accessToken?: string
   refreshToken?: string | null
   tokenExpiresAt?: string | null
@@ -131,6 +133,7 @@ export async function googleRoutes(app: FastifyInstance, opts: GoogleRoutesOptio
       domain: connection.domain,
       connectionType: connection.connectionType,
       propertyId: connection.propertyId ?? null,
+      sitemapUrl: connection.sitemapUrl ?? null,
       scopes: connection.scopes ?? [],
       createdAt: connection.createdAt,
       updatedAt: connection.updatedAt,
@@ -712,6 +715,89 @@ export async function googleRoutes(app: FastifyInstance, opts: GoogleRoutesOptio
       .reverse()
   })
 
+  // GET /projects/:name/google/gsc/sitemaps
+  app.get<{ Params: { name: string } }>('/projects/:name/google/gsc/sitemaps', async (request, reply) => {
+    const { clientId: googleClientId, clientSecret: googleClientSecret } = getAuthConfig()
+    if (!googleClientId || !googleClientSecret) {
+      const err = validationError('Google OAuth is not configured')
+      return reply.status(err.statusCode).send(err.toJSON())
+    }
+
+    const store = requireConnectionStore(reply)
+    if (!store) return
+
+    const project = resolveProject(app.db, request.params.name)
+    const { accessToken, propertyId } = await getValidToken(store, project.canonicalDomain, 'gsc', googleClientId, googleClientSecret)
+    if (!propertyId) {
+      const err = validationError('No GSC property configured for this connection. Set one with "canonry google set-property".')
+      return reply.status(err.statusCode).send(err.toJSON())
+    }
+
+    const sitemaps = await listSitemaps(accessToken, propertyId)
+    return { sitemaps }
+  })
+
+  // POST /projects/:name/google/gsc/discover-sitemaps
+  app.post<{ Params: { name: string } }>('/projects/:name/google/gsc/discover-sitemaps', async (request, reply) => {
+    const { clientId: googleClientId, clientSecret: googleClientSecret } = getAuthConfig()
+    if (!googleClientId || !googleClientSecret) {
+      const err = validationError('Google OAuth is not configured')
+      return reply.status(err.statusCode).send(err.toJSON())
+    }
+
+    const store = requireConnectionStore(reply)
+    if (!store) return
+
+    const project = resolveProject(app.db, request.params.name)
+    const conn = store.getConnection(project.canonicalDomain, 'gsc')
+    if (!conn) {
+      const err = validationError('No GSC connection found for this domain. Run "canonry google connect" first.')
+      return reply.status(err.statusCode).send(err.toJSON())
+    }
+
+    if (!conn.propertyId) {
+      const err = validationError('No GSC property configured for this connection')
+      return reply.status(err.statusCode).send(err.toJSON())
+    }
+
+    const { accessToken } = await getValidToken(store, project.canonicalDomain, 'gsc', googleClientId, googleClientSecret)
+    const sitemaps = await listSitemaps(accessToken, conn.propertyId)
+
+    if (sitemaps.length === 0) {
+      const err = validationError('No sitemaps found for this GSC property. Submit a sitemap in Google Search Console first.')
+      return reply.status(err.statusCode).send(err.toJSON())
+    }
+
+    // Prefer non-index sitemaps, otherwise use the first one
+    const primary = sitemaps.find((s) => !s.isSitemapsIndex) ?? sitemaps[0]!
+    const sitemapUrl = primary.path
+
+    // Store discovered sitemap URL on the connection
+    store.updateConnection(project.canonicalDomain, 'gsc', {
+      sitemapUrl,
+      updatedAt: new Date().toISOString(),
+    })
+
+    // Queue a sitemap inspection run
+    const now = new Date().toISOString()
+    const runId = crypto.randomUUID()
+    app.db.insert(runs).values({
+      id: runId,
+      projectId: project.id,
+      kind: 'inspect-sitemap',
+      status: 'queued',
+      trigger: 'manual',
+      createdAt: now,
+    }).run()
+
+    if (opts.onInspectSitemapRequested) {
+      opts.onInspectSitemapRequested(runId, project.id, { sitemapUrl })
+    }
+
+    const run = app.db.select().from(runs).where(eq(runs.id, runId)).get()
+    return { sitemaps, primarySitemapUrl: sitemapUrl, run }
+  })
+
   // POST /projects/:name/google/gsc/inspect-sitemap
   app.post<{
     Params: { name: string }
@@ -750,6 +836,34 @@ export async function googleRoutes(app: FastifyInstance, opts: GoogleRoutesOptio
 
     const run = app.db.select().from(runs).where(eq(runs.id, runId)).get()
     return run
+  })
+
+  // PUT /projects/:name/google/connections/:type/sitemap
+  app.put<{
+    Params: { name: string; type: string }
+    Body: { sitemapUrl: string }
+  }>('/projects/:name/google/connections/:type/sitemap', async (request, reply) => {
+    const store = requireConnectionStore(reply)
+    if (!store) return
+
+    const project = resolveProject(app.db, request.params.name)
+    const { sitemapUrl } = request.body ?? {}
+    if (!sitemapUrl || !sitemapUrl.trim()) {
+      const err = validationError('sitemapUrl is required')
+      return reply.status(err.statusCode).send(err.toJSON())
+    }
+
+    const conn = store.updateConnection(
+      project.canonicalDomain,
+      request.params.type as 'gsc' | 'ga4',
+      { sitemapUrl: sitemapUrl.trim(), updatedAt: new Date().toISOString() },
+    )
+    if (!conn) {
+      const err = notFound('Google connection', request.params.type)
+      return reply.status(err.statusCode).send(err.toJSON())
+    }
+
+    return { sitemapUrl: sitemapUrl.trim() }
   })
 
   // PUT /projects/:name/google/connections/:type/property
