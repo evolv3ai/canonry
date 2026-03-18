@@ -38,6 +38,10 @@ export interface ApiRoutesOptions {
   openApiInfo?: OpenApiInfo
   /** Skip auth for testing */
   skipAuth?: boolean
+  /** API route prefix (default: /api/v1). Override for sub-path deployments e.g. /canonry/api/v1.
+   *  Named routePrefix (not prefix) to avoid collision with Fastify's reserved prefix option.
+   *  Must start with '/' — values without a leading slash will be rejected at startup. */
+  routePrefix?: string
   /** Callback when a run is created (wire up job runner) */
   onRunCreated?: (runId: string, projectId: string, providers?: string[], location?: import('@ainyc/canonry-contracts').LocationContext | null) => void
   /** Provider configuration summary for settings endpoint */
@@ -72,6 +76,14 @@ export interface ApiRoutesOptions {
 }
 
 export async function apiRoutes(app: FastifyInstance, opts: ApiRoutesOptions) {
+  // Validate routePrefix format eagerly to surface misconfiguration at startup
+  // rather than silently mis-routing all API requests.
+  if (opts.routePrefix !== undefined && !opts.routePrefix.startsWith('/')) {
+    throw new Error(
+      `apiRoutes: routePrefix must start with '/' — got ${JSON.stringify(opts.routePrefix)}`,
+    )
+  }
+
   // Decorate with db
   app.decorate('db', opts.db)
 
@@ -165,7 +177,7 @@ export async function apiRoutes(app: FastifyInstance, opts: ApiRoutesOptions) {
       onCdpScreenshot: opts.onCdpScreenshot,
       onCdpConfigure: opts.onCdpConfigure,
     } satisfies CDPRoutesOptions)
-  }, { prefix: '/api/v1' })
+  }, { prefix: opts.routePrefix ?? '/api/v1' })
 }
 
 export type { DatabaseClient } from '@ainyc/canonry-db'
