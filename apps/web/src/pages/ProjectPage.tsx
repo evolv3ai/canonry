@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronRight, Download, Trash2 } from 'lucide-react'
 import { useParams, useNavigate } from '@tanstack/react-router'
 import { Link } from '@tanstack/react-router'
@@ -38,6 +38,8 @@ import {
   fetchBingInspections,
   inspectBingUrl,
   bingRequestIndexing,
+  triggerGscSync,
+  fetchRunDetail,
   fetchBingPerformance,
   fetchSettings,
   fetchGoogleConnections,
@@ -624,8 +626,9 @@ function SearchConsoleSection({
 }) {
   const [workspace, setWorkspace] = useState<SearchConsoleWorkspace>('google')
   const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
+  const [refreshState, setRefreshState] = useState<'idle' | 'syncing' | 'reloading'>('idle')
   const [error, setError] = useState<string | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
   const [googleConfigured, setGoogleConfigured] = useState(false)
   const [googleConnection, setGoogleConnection] = useState<ApiGoogleConnection | null>(null)
   const [googleCoverage, setGoogleCoverage] = useState<ApiGscCoverageSummary | null>(null)
@@ -634,11 +637,7 @@ function SearchConsoleSection({
   const [bingCoverage, setBingCoverage] = useState<ApiBingCoverageSummary | null>(null)
 
   async function loadSummary(silent = false) {
-    if (silent) {
-      setRefreshing(true)
-    } else {
-      setLoading(true)
-    }
+    if (!silent) setLoading(true)
     setError(null)
 
     try {
@@ -665,12 +664,98 @@ function SearchConsoleSection({
       setError(err instanceof Error ? err.message : 'Failed to load search console overview')
     } finally {
       setLoading(false)
-      setRefreshing(false)
+    }
+  }
+
+  /**
+   * Trigger live queries against both Google (GSC sync job) and Bing (per-URL re-inspection),
+   * run them in parallel, wait for both to settle, then reload coverage data.
+   */
+  async function handleRefresh() {
+    if (refreshState !== 'idle') return
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    const signal = controller.signal
+
+    setRefreshState('syncing')
+    setError(null)
+
+    const failures: string[] = []
+
+    try {
+      // --- Google: trigger a background GSC sync job and poll to completion ---
+      async function syncGoogle() {
+        if (!googleConnection) return
+        const run = await triggerGscSync(projectName)
+        if (!run?.id) return
+
+        const POLL_INTERVAL_MS = 2000
+        const TIMEOUT_MS = 120_000
+        const deadline = Date.now() + TIMEOUT_MS
+
+        while (Date.now() < deadline) {
+          if (signal.aborted) return
+          await new Promise<void>((resolve) => setTimeout(resolve, POLL_INTERVAL_MS))
+          if (signal.aborted) return
+          const detail = await fetchRunDetail(run.id).catch(() => null)
+          if (!detail) break
+          if (['completed', 'failed', 'cancelled'].includes(detail.status)) {
+            if (detail.status !== 'completed') failures.push(`Google sync ${detail.status}`)
+            break
+          }
+        }
+      }
+
+      // --- Bing: re-inspect previously known URLs with concurrency limit ---
+      const BING_CONCURRENCY = 10
+      async function syncBing() {
+        if (!bingConnection?.connected) return
+        const inspections = await fetchBingInspections(projectName).catch(() => [] as ApiBingInspection[])
+        const uniqueUrls = [...new Set(inspections.map((i) => i.url))]
+        if (uniqueUrls.length === 0) return
+
+        for (let i = 0; i < uniqueUrls.length; i += BING_CONCURRENCY) {
+          if (signal.aborted) return
+          const batch = uniqueUrls.slice(i, i + BING_CONCURRENCY)
+          const results = await Promise.allSettled(batch.map((url) => inspectBingUrl(projectName, url)))
+          const batchFailures = results.filter((r) => r.status === 'rejected').length
+          if (batchFailures > 0) failures.push(`${batchFailures} Bing inspection(s) failed`)
+        }
+      }
+
+      const results = await Promise.allSettled([syncGoogle(), syncBing()])
+      for (const r of results) {
+        if (r.status === 'rejected') {
+          failures.push(r.reason instanceof Error ? r.reason.message : 'Sync failed')
+        }
+      }
+
+      if (signal.aborted) return
+
+      // Reload both coverage summaries from fresh DB values
+      setRefreshState('reloading')
+      await loadSummary(true)
+
+      if (failures.length > 0) {
+        setError(`Partial refresh: ${failures.join('; ')}`)
+      }
+    } catch (err) {
+      if (!signal.aborted) {
+        setError(err instanceof Error ? err.message : 'Refresh failed')
+      }
+    } finally {
+      if (!signal.aborted) {
+        setRefreshState('idle')
+      }
     }
   }
 
   useEffect(() => {
     void loadSummary()
+    return () => {
+      abortRef.current?.abort()
+    }
   }, [projectName])
 
   const googleTone = googleConnection ? 'positive' : googleConfigured ? 'caution' : 'negative'
@@ -716,8 +801,8 @@ function SearchConsoleSection({
               Scan both engines at a glance, then open the Google or Bing workspace when you need to inspect coverage or take action.
             </p>
           </div>
-          <Button type="button" variant="outline" size="sm" disabled={loading || refreshing} onClick={() => void loadSummary(true)}>
-            {loading || refreshing ? 'Refreshing…' : 'Refresh overview'}
+          <Button type="button" variant="outline" size="sm" disabled={loading || refreshState !== 'idle'} onClick={() => void handleRefresh()}>
+            {loading ? 'Loading…' : refreshState === 'syncing' ? 'Querying Google & Bing…' : refreshState === 'reloading' ? 'Reloading…' : 'Refresh overview'}
           </Button>
         </div>
 
