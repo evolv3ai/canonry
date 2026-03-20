@@ -97,6 +97,7 @@ Options:
   --gemini-key <key>   Gemini API key (or GEMINI_API_KEY env var)
   --openai-key <key>   OpenAI API key (or OPENAI_API_KEY env var)
   --claude-key <key>   Anthropic API key (or ANTHROPIC_API_KEY env var)
+  --perplexity-key <key> Perplexity API key (or PERPLEXITY_API_KEY env var)
   --local-url <url>    Local LLM base URL (or LOCAL_BASE_URL env var)
   --local-model <name> Local LLM model name (default: llama3)
   --local-key <key>    Local LLM API key (or LOCAL_API_KEY env var)
@@ -111,7 +112,7 @@ Options:
   --display-name <name>    Display name for project create/update
   --country <code>     Country code (default: US)
   --language <lang>    Language code (default: en)
-  --provider <name>    Provider to use (gemini, openai, claude, local, cdp:chatgpt, or cdp for all CDP targets)
+  --provider <name>    Provider to use (gemini, openai, claude, perplexity, local, cdp:chatgpt, or cdp for all CDP targets)
   --format <fmt>       Output format: text (default) or json
   --location <label>   Run with a specific configured location
   --all-locations      Run for every configured location

@@ -1,4 +1,4 @@
-import { providerQuotaPolicySchema, getDefaultModel, type ProviderQuotaPolicy } from '@ainyc/canonry-contracts'
+import { providerQuotaPolicySchema, type ProviderQuotaPolicy } from '@ainyc/canonry-contracts'
 import { z } from 'zod'
 
 const envSchema = z.object({
@@ -25,6 +25,12 @@ const envSchema = z.object({
   ANTHROPIC_MAX_CONCURRENCY: z.coerce.number().int().positive().default(2),
   ANTHROPIC_MAX_REQUESTS_PER_MINUTE: z.coerce.number().int().positive().default(10),
   ANTHROPIC_MAX_REQUESTS_PER_DAY: z.coerce.number().int().positive().default(1000),
+  // Perplexity
+  PERPLEXITY_API_KEY: z.string().optional(),
+  PERPLEXITY_MODEL: z.string().optional(),
+  PERPLEXITY_MAX_CONCURRENCY: z.coerce.number().int().positive().default(2),
+  PERPLEXITY_MAX_REQUESTS_PER_MINUTE: z.coerce.number().int().positive().default(10),
+  PERPLEXITY_MAX_REQUESTS_PER_DAY: z.coerce.number().int().positive().default(1000),
 })
 
 export interface ProviderEnvConfig {
@@ -50,6 +56,7 @@ export interface BootstrapEnv {
     gemini?: ProviderEnvConfig
     openai?: ProviderEnvConfig
     claude?: ProviderEnvConfig
+    perplexity?: ProviderEnvConfig
     local?: LocalBootstrapProviderConfig
   }
 }
@@ -64,6 +71,7 @@ export interface PlatformEnv {
     gemini?: ProviderEnvConfig
     openai?: ProviderEnvConfig
     claude?: ProviderEnvConfig
+    perplexity?: ProviderEnvConfig
   }
 }
 
@@ -77,6 +85,8 @@ const bootstrapEnvSchema = z.object({
   OPENAI_MODEL: z.string().optional(),
   ANTHROPIC_API_KEY: z.string().optional(),
   ANTHROPIC_MODEL: z.string().optional(),
+  PERPLEXITY_API_KEY: z.string().optional(),
+  PERPLEXITY_MODEL: z.string().optional(),
   LOCAL_BASE_URL: z.string().optional(),
   LOCAL_API_KEY: z.string().optional(),
   LOCAL_MODEL: z.string().optional(),
@@ -125,6 +135,18 @@ export function getPlatformEnv(source: NodeJS.ProcessEnv): PlatformEnv {
     }
   }
 
+  if (parsed.PERPLEXITY_API_KEY) {
+    providers.perplexity = {
+      apiKey: parsed.PERPLEXITY_API_KEY,
+      model: parsed.PERPLEXITY_MODEL,
+      quota: providerQuotaPolicySchema.parse({
+        maxConcurrency: parsed.PERPLEXITY_MAX_CONCURRENCY,
+        maxRequestsPerMinute: parsed.PERPLEXITY_MAX_REQUESTS_PER_MINUTE,
+        maxRequestsPerDay: parsed.PERPLEXITY_MAX_REQUESTS_PER_DAY,
+      }),
+    }
+  }
+
   return {
     databaseUrl: parsed.DATABASE_URL,
     apiPort: parsed.API_PORT,
@@ -148,7 +170,7 @@ export function getBootstrapEnv(
   if (parsed.GEMINI_API_KEY) {
     providers.gemini = {
       apiKey: parsed.GEMINI_API_KEY,
-      model: parsed.GEMINI_MODEL || getDefaultModel('gemini'),
+      model: parsed.GEMINI_MODEL || 'gemini-3-flash',
       quota: providerQuotaPolicySchema.parse({
         maxConcurrency: 2,
         maxRequestsPerMinute: 10,
@@ -160,7 +182,7 @@ export function getBootstrapEnv(
   if (parsed.OPENAI_API_KEY) {
     providers.openai = {
       apiKey: parsed.OPENAI_API_KEY,
-      model: parsed.OPENAI_MODEL || getDefaultModel('openai'),
+      model: parsed.OPENAI_MODEL || 'gpt-5.4',
       quota: providerQuotaPolicySchema.parse({
         maxConcurrency: 2,
         maxRequestsPerMinute: 10,
@@ -172,7 +194,19 @@ export function getBootstrapEnv(
   if (parsed.ANTHROPIC_API_KEY) {
     providers.claude = {
       apiKey: parsed.ANTHROPIC_API_KEY,
-      model: parsed.ANTHROPIC_MODEL || getDefaultModel('claude'),
+      model: parsed.ANTHROPIC_MODEL || 'claude-sonnet-4-6',
+      quota: providerQuotaPolicySchema.parse({
+        maxConcurrency: 2,
+        maxRequestsPerMinute: 10,
+        maxRequestsPerDay: 500,
+      }),
+    }
+  }
+
+  if (parsed.PERPLEXITY_API_KEY) {
+    providers.perplexity = {
+      apiKey: parsed.PERPLEXITY_API_KEY,
+      model: parsed.PERPLEXITY_MODEL || 'sonar',
       quota: providerQuotaPolicySchema.parse({
         maxConcurrency: 2,
         maxRequestsPerMinute: 10,
@@ -185,7 +219,7 @@ export function getBootstrapEnv(
     providers.local = {
       baseUrl: parsed.LOCAL_BASE_URL,
       apiKey: parsed.LOCAL_API_KEY,
-      model: parsed.LOCAL_MODEL || getDefaultModel('local'),
+      model: parsed.LOCAL_MODEL || 'llama3',
       quota: providerQuotaPolicySchema.parse({
         maxConcurrency: 2,
         maxRequestsPerMinute: 10,

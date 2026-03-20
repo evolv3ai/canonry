@@ -63,13 +63,8 @@ export interface CanonryConfig {
   geminiApiKey?: string
   geminiModel?: string
   geminiQuota?: ProviderQuotaPolicy
-  // Multi-provider config (API providers)
-  providers?: {
-    gemini?: ProviderConfigEntry
-    openai?: ProviderConfigEntry
-    claude?: ProviderConfigEntry
-    local?: ProviderConfigEntry
-  }
+  // Multi-provider config (API providers) — keyed by adapter name
+  providers?: Record<string, ProviderConfigEntry>
   // CDP browser provider config (separate from API providers)
   cdp?: CdpConfigEntry
   google?: GoogleConfigEntry
@@ -109,7 +104,7 @@ export function loadConfig(): CanonryConfig {
     throw new Error(
       `Config not found at ${configPath}.\n` +
       'Run "canonry init" to set up interactively, or "canonry init --gemini-key <key>" for non-interactive setup.\n' +
-      'For CI/Docker, use "canonry bootstrap" with env vars (GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET).',
+      'For CI/Docker, use "canonry bootstrap" with env vars (GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, PERPLEXITY_API_KEY, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET).',
     )
   }
   const raw = fs.readFileSync(configPath, 'utf-8')

@@ -30,7 +30,7 @@ GEMINI_API_KEY=... OPENAI_API_KEY=... canonry init
 
 ## Features
 
-- **Multi-provider monitoring** -- query Gemini, OpenAI, Claude, and local LLMs (Ollama, LM Studio, or any OpenAI-compatible endpoint) from a single tool.
+- **Multi-provider monitoring** -- query Gemini, OpenAI, Claude, Perplexity, and local LLMs (Ollama, LM Studio, or any OpenAI-compatible endpoint) from a single tool.
 - **API-first surfaces** -- the REST API is canonical, the CLI is the standard automation surface, and the web dashboard consumes the same core workflows.
 - **Project-scoped location context** -- define named locations per project, set a default, and run explicit or all-location sweeps without making keywords location-owned.
 - **Config-as-code** -- manage projects with Kubernetes-style YAML files. Version control your monitoring setup.
@@ -48,6 +48,7 @@ All commands support `--format json` for machine-readable output.
 ```bash
 canonry init [--force]               # Initialize config and database (interactive)
 canonry init --gemini-key <key>      # Initialize non-interactively (flags or env vars)
+canonry init --perplexity-key <key>  # Any combination of provider flags works
 canonry bootstrap [--force]          # Bootstrap config/database from env vars only
 canonry serve [--port 4100] [--base-path /prefix/]   # Start server (foreground)
 canonry start [--port 4100] [--base-path /prefix/]   # Start server (background daemon)
@@ -55,7 +56,7 @@ canonry stop                         # Stop the background daemon
 canonry settings                     # View active provider and quota settings
 ```
 
-Non-interactive `init` flags: `--gemini-key`, `--openai-key`, `--claude-key`, `--local-url`, `--local-model`, `--local-key`, `--google-client-id`, `--google-client-secret`. Falls back to `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `LOCAL_BASE_URL`, `LOCAL_MODEL`, `LOCAL_API_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` env vars.
+Non-interactive `init` flags: `--gemini-key`, `--openai-key`, `--claude-key`, `--perplexity-key`, `--local-url`, `--local-model`, `--local-key`, `--google-client-id`, `--google-client-secret`. Falls back to `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `PERPLEXITY_API_KEY`, `LOCAL_BASE_URL`, `LOCAL_MODEL`, `LOCAL_API_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` env vars.
 
 ### Projects
 
@@ -136,6 +137,7 @@ canonry settings provider gemini --api-key <key>
 canonry settings google --client-id <id> --client-secret <secret>
 canonry settings provider local --base-url http://localhost:11434/v1 --model llama3
 canonry settings provider openai --api-key <key> --max-per-day 1000 --max-per-minute 20
+canonry settings provider perplexity --api-key <key>
 ```
 
 Quota flags: `--max-concurrent`, `--max-per-minute`, `--max-per-day`.
@@ -173,6 +175,7 @@ spec:
     - gemini
     - openai
     - claude
+    - perplexity
     - local
   locations:
     - label: sf
@@ -244,6 +247,16 @@ Get an API key from [platform.openai.com](https://platform.openai.com/api-keys).
 ### Claude
 
 Get an API key from [console.anthropic.com](https://console.anthropic.com/settings/keys).
+
+### Perplexity
+
+Get an API key from [perplexity.ai/settings/api](https://www.perplexity.ai/settings/api). Perplexity uses its Sonar model family with built-in web search, so citation results reflect live search grounding.
+
+```bash
+canonry settings provider perplexity --api-key <key>
+```
+
+Available models: `sonar` (default), `sonar-pro`, `sonar-reasoning`, `sonar-reasoning-pro`.
 
 ### Local LLMs
 
@@ -419,6 +432,7 @@ Canonry runs as a **single service** -- the API, web dashboard, and job schedule
 | `GEMINI_API_KEY` | Google Gemini provider key |
 | `OPENAI_API_KEY` | OpenAI provider key |
 | `ANTHROPIC_API_KEY` | Anthropic/Claude provider key |
+| `PERPLEXITY_API_KEY` | Perplexity provider key |
 | `LOCAL_BASE_URL` | Local LLM endpoint (Ollama, LM Studio, etc.) |
 | `CANONRY_API_KEY` | Pin a specific API key instead of auto-generating one |
 

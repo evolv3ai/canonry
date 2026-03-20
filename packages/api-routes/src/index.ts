@@ -16,7 +16,7 @@ import { analyticsRoutes } from './analytics.js'
 import { openApiRoutes } from './openapi.js'
 import type { OpenApiInfo } from './openapi.js'
 import { settingsRoutes } from './settings.js'
-import type { SettingsRoutesOptions, ProviderSummaryEntry } from './settings.js'
+import type { SettingsRoutesOptions, ProviderSummaryEntry, ProviderAdapterInfo } from './settings.js'
 import { telemetryRoutes } from './telemetry.js'
 import type { TelemetryRoutesOptions } from './telemetry.js'
 import { scheduleRoutes } from './schedules.js'
@@ -45,6 +45,8 @@ export interface ApiRoutesOptions {
   onRunCreated?: (runId: string, projectId: string, providers?: string[], location?: import('@ainyc/canonry-contracts').LocationContext | null) => void
   /** Provider configuration summary for settings endpoint */
   providerSummary?: ProviderSummaryEntry[]
+  /** Adapter metadata for provider validation */
+  providerAdapters?: ProviderAdapterInfo[]
   /** Callback when a provider config is updated via API */
   onProviderUpdate?: SettingsRoutesOptions['onProviderUpdate']
   /** Google OAuth configuration summary + update callback */
@@ -138,14 +140,20 @@ export async function apiRoutes(app: FastifyInstance, opts: ApiRoutesOptions) {
     await api.register(openApiRoutes, opts.openApiInfo ?? {})
     await api.register(projectRoutes, {
       onProjectDeleted: opts.onProjectDeleted,
+      validProviderNames: opts.providerAdapters?.map(a => a.name),
     } satisfies ProjectRoutesOptions)
     await api.register(keywordRoutes, {
       onGenerateKeywords: opts.onGenerateKeywords,
+      validProviderNames: opts.providerAdapters?.filter(a => a.mode === 'api').map(a => a.name),
     } satisfies KeywordRoutesOptions)
     await api.register(competitorRoutes)
-    await api.register(runRoutes, { onRunCreated: opts.onRunCreated } satisfies RunRoutesOptions)
+    await api.register(runRoutes, {
+      onRunCreated: opts.onRunCreated,
+      validProviderNames: opts.providerAdapters?.map(a => a.name),
+    } satisfies RunRoutesOptions)
     await api.register(applyRoutes, {
       onScheduleUpdated: opts.onScheduleUpdated,
+      validProviderNames: opts.providerAdapters?.map(a => a.name),
       onGoogleConnectionPropertyUpdated: (domain, connectionType, propertyId) => {
         opts.googleConnectionStore?.updateConnection(domain, connectionType, {
           propertyId,
@@ -157,6 +165,7 @@ export async function apiRoutes(app: FastifyInstance, opts: ApiRoutesOptions) {
     await api.register(analyticsRoutes)
     await api.register(settingsRoutes, {
       providerSummary: opts.providerSummary,
+      providerAdapters: opts.providerAdapters,
       onProviderUpdate: opts.onProviderUpdate,
       google: opts.googleSettingsSummary,
       onGoogleUpdate: opts.onGoogleSettingsUpdate,
@@ -165,6 +174,7 @@ export async function apiRoutes(app: FastifyInstance, opts: ApiRoutesOptions) {
     } satisfies SettingsRoutesOptions)
     await api.register(scheduleRoutes, {
       onScheduleUpdated: opts.onScheduleUpdated,
+      validProviderNames: opts.providerAdapters?.map(a => a.name),
     } satisfies ScheduleRoutesOptions)
     await api.register(notificationRoutes)
     await api.register(telemetryRoutes, {
