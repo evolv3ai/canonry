@@ -19,7 +19,6 @@ interface NotificationResponse {
 export async function addNotification(project: string, opts: {
   webhook: string
   events: string[]
-  format?: string
 }): Promise<void> {
   const client = getClient()
   const result = await client.createNotification(project, {
@@ -27,11 +26,6 @@ export async function addNotification(project: string, opts: {
     url: opts.webhook,
     events: opts.events,
   }) as NotificationResponse
-
-  if (opts.format === 'json') {
-    console.log(JSON.stringify(result, null, 2))
-    return
-  }
 
   console.log(`Notification created for "${project}":`)
   printNotification(result)
@@ -58,23 +52,15 @@ export async function listNotifications(project: string, format?: string): Promi
   }
 }
 
-export async function removeNotification(project: string, id: string, format?: string): Promise<void> {
+export async function removeNotification(project: string, id: string): Promise<void> {
   const client = getClient()
   await client.deleteNotification(project, id)
-  if (format === 'json') {
-    console.log(JSON.stringify({ project, id, removed: true }, null, 2))
-    return
-  }
   console.log(`Notification ${id} removed from "${project}"`)
 }
 
-export async function testNotification(project: string, id: string, format?: string): Promise<void> {
+export async function testNotification(project: string, id: string): Promise<void> {
   const client = getClient()
   const result = await client.testNotification(project, id) as { status: number; ok: boolean }
-  if (format === 'json') {
-    console.log(JSON.stringify({ project, id, ...result }, null, 2))
-    return
-  }
   if (result.ok) {
     console.log(`Test webhook delivered successfully (HTTP ${result.status})`)
   } else {

@@ -1,7 +1,6 @@
 import { loadConfig } from '../config.js'
 import { ApiClient } from '../client.js'
 import type { BrandMetricsDto, GapAnalysisDto, SourceBreakdownDto } from '@ainyc/canonry-contracts'
-import { CliError } from '../cli-error.js'
 
 function getClient(): ApiClient {
   const config = loadConfig()
@@ -38,15 +37,8 @@ export async function showAnalytics(
         break
       }
       default:
-        throw new CliError({
-          code: 'INVALID_ANALYTICS_FEATURE',
-          message: `Unknown analytics feature "${feature}"`,
-          displayMessage: `Unknown feature: ${feature}. Use: metrics, gaps, sources`,
-          details: {
-            feature,
-            validFeatures: ['metrics', 'gaps', 'sources'],
-          },
-        })
+        console.error(`Unknown feature: ${feature}. Use: metrics, gaps, sources`)
+        process.exit(1)
     }
   }
 

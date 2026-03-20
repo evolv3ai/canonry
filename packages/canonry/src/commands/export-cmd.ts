@@ -4,7 +4,7 @@ import { ApiClient } from '../client.js'
 
 export async function exportProject(
   project: string,
-  opts: { includeResults?: boolean; format?: string },
+  opts: { includeResults?: boolean },
 ): Promise<void> {
   const config = loadConfig()
   const client = new ApiClient(config.apiUrl, config.apiKey)
@@ -34,11 +34,6 @@ export async function exportProject(
     } catch {
       // Results not available, skip
     }
-  }
-
-  if (opts.format === 'json') {
-    console.log(JSON.stringify(data, null, 2))
-    return
   }
 
   console.log(stringify(data))

@@ -1,6 +1,5 @@
 import { loadConfig } from '../config.js'
 import { ApiClient } from '../client.js'
-import { CliError } from '../cli-error.js'
 
 function getClient(): ApiClient {
   const config = loadConfig()
@@ -41,14 +40,7 @@ export async function showHistory(project: string, format?: string): Promise<voi
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err)
-    throw new CliError({
-      code: 'HISTORY_FETCH_FAILED',
-      message: `Failed to fetch history for project "${project}"`,
-      displayMessage: `Failed to fetch history: ${message}`,
-      details: {
-        project,
-        cause: message,
-      },
-    })
+    console.error(`Failed to fetch history: ${message}`)
+    process.exit(1)
   }
 }

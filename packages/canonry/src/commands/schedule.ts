@@ -23,7 +23,6 @@ export async function setSchedule(project: string, opts: {
   cron?: string
   timezone?: string
   providers?: string[]
-  format?: string
 }): Promise<void> {
   const client = getClient()
   const body: Record<string, unknown> = {}
@@ -33,10 +32,6 @@ export async function setSchedule(project: string, opts: {
   if (opts.providers?.length) body.providers = opts.providers
 
   const result = await client.putSchedule(project, body) as ScheduleResponse
-  if (opts.format === 'json') {
-    console.log(JSON.stringify(result, null, 2))
-    return
-  }
   console.log(`Schedule set for "${project}":`)
   printSchedule(result)
 }
@@ -53,7 +48,7 @@ export async function showSchedule(project: string, format?: string): Promise<vo
   printSchedule(result)
 }
 
-export async function enableSchedule(project: string, format?: string): Promise<void> {
+export async function enableSchedule(project: string): Promise<void> {
   const client = getClient()
   const current = await client.getSchedule(project) as ScheduleResponse
   const body: Record<string, unknown> = { timezone: current.timezone }
@@ -61,15 +56,11 @@ export async function enableSchedule(project: string, format?: string): Promise<
   else body.cron = current.cronExpr
   if (current.providers.length) body.providers = current.providers
 
-  const result = await client.putSchedule(project, body) as ScheduleResponse
-  if (format === 'json') {
-    console.log(JSON.stringify(result, null, 2))
-    return
-  }
+  await client.putSchedule(project, body)
   console.log(`Schedule enabled for "${project}"`)
 }
 
-export async function disableSchedule(project: string, format?: string): Promise<void> {
+export async function disableSchedule(project: string): Promise<void> {
   const client = getClient()
   const current = await client.getSchedule(project) as ScheduleResponse
   const body: Record<string, unknown> = { timezone: current.timezone, enabled: false }
@@ -77,21 +68,13 @@ export async function disableSchedule(project: string, format?: string): Promise
   else body.cron = current.cronExpr
   if (current.providers.length) body.providers = current.providers
 
-  const result = await client.putSchedule(project, body) as ScheduleResponse
-  if (format === 'json') {
-    console.log(JSON.stringify(result, null, 2))
-    return
-  }
+  await client.putSchedule(project, body)
   console.log(`Schedule disabled for "${project}"`)
 }
 
-export async function removeSchedule(project: string, format?: string): Promise<void> {
+export async function removeSchedule(project: string): Promise<void> {
   const client = getClient()
   await client.deleteSchedule(project)
-  if (format === 'json') {
-    console.log(JSON.stringify({ project, removed: true }, null, 2))
-    return
-  }
   console.log(`Schedule removed for "${project}"`)
 }
 
