@@ -219,22 +219,26 @@ export async function bingRoutes(app: FastifyInstance, opts: BingRoutesOptions) 
 
     const indexedUrls: typeof allInspections = []
     const notIndexedUrls: typeof allInspections = []
+    const unknownUrls: typeof allInspections = []
     let lastInspectedAt: string | null = null
 
     for (const [, row] of latestByUrl) {
       if (row.inIndex === 1) {
         indexedUrls.push(row)
-      } else {
+      } else if (row.inIndex === 0) {
         notIndexedUrls.push(row)
+      } else {
+        unknownUrls.push(row)
       }
       if (!lastInspectedAt || row.inspectedAt > lastInspectedAt) {
         lastInspectedAt = row.inspectedAt
       }
     }
 
-    const total = latestByUrl.size
     const indexed = indexedUrls.length
     const notIndexed = notIndexedUrls.length
+    const unknown = unknownUrls.length
+    const total = indexed + notIndexed
 
     const formatRow = (r: typeof allInspections[number]) => ({
       id: r.id,
@@ -244,6 +248,9 @@ export async function bingRoutes(app: FastifyInstance, opts: BingRoutesOptions) 
       lastCrawledDate: r.lastCrawledDate,
       inIndexDate: r.inIndexDate,
       inspectedAt: r.inspectedAt,
+      documentSize: r.documentSize ?? null,
+      anchorCount: r.anchorCount ?? null,
+      discoveryDate: r.discoveryDate ?? null,
     })
 
     return {
@@ -251,11 +258,13 @@ export async function bingRoutes(app: FastifyInstance, opts: BingRoutesOptions) 
         total,
         indexed,
         notIndexed,
+        unknown,
         percentage: total > 0 ? Math.round((indexed / total) * 1000) / 10 : 0,
       },
       lastInspectedAt,
       indexed: indexedUrls.map(formatRow),
       notIndexed: notIndexedUrls.map(formatRow),
+      unknown: unknownUrls.map(formatRow),
     }
   })
 
@@ -290,6 +299,9 @@ export async function bingRoutes(app: FastifyInstance, opts: BingRoutesOptions) 
       lastCrawledDate: r.lastCrawledDate,
       inIndexDate: r.inIndexDate,
       inspectedAt: r.inspectedAt,
+      documentSize: r.documentSize ?? null,
+      anchorCount: r.anchorCount ?? null,
+      discoveryDate: r.discoveryDate ?? null,
     }))
   })
 
@@ -319,7 +331,14 @@ export async function bingRoutes(app: FastifyInstance, opts: BingRoutesOptions) 
     let result
     try {
       result = await getUrlInfo(conn.apiKey, conn.siteUrl, url)
-      bingLog('info', 'inspect-url.result', { domain: project.canonicalDomain, url, httpCode: result.HttpCode ?? null, inIndex: result.InIndex ?? null, lastCrawledDate: result.LastCrawledDate ?? null })
+      bingLog('info', 'inspect-url.result', {
+        domain: project.canonicalDomain,
+        url,
+        httpStatus: result.HttpStatus ?? result.HttpCode ?? null,
+        inIndex: result.InIndex ?? null,
+        documentSize: result.DocumentSize ?? null,
+        lastCrawledDate: result.LastCrawledDate ?? null,
+      })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       bingLog('error', 'inspect-url.failed', { domain: project.canonicalDomain, url, error: msg })
@@ -328,27 +347,47 @@ export async function bingRoutes(app: FastifyInstance, opts: BingRoutesOptions) 
 
     const now = new Date().toISOString()
     const id = crypto.randomUUID()
+    const httpCode = result.HttpStatus ?? result.HttpCode ?? null
+
+    // Bing's published GetUrlInfo contract documents UrlInfo via:
+    // https://learn.microsoft.com/en-us/dotnet/api/microsoft.bing.webmaster.api.interfaces.iwebmasterapi.geturlinfo?view=bing-webmaster-dotnet
+    // WSDL: https://ssl.bing.com/webmaster/api.svc?singleWsdl
+    // Use any explicit legacy InIndex flag if it is present. Otherwise, only a
+    // positive DocumentSize is strong enough to treat the URL as indexed.
+    // Zero-byte responses stay unknown instead of being forced to "not indexed".
+    const derivedInIndex: boolean | null =
+      result.InIndex != null
+        ? result.InIndex
+        : result.DocumentSize != null && result.DocumentSize > 0
+          ? true
+          : null
 
     app.db.insert(bingUrlInspections).values({
       id,
       projectId: project.id,
       url,
-      httpCode: result.HttpCode ?? null,
-      inIndex: result.InIndex === true ? 1 : result.InIndex === false ? 0 : null,
+      httpCode,
+      inIndex: derivedInIndex === true ? 1 : derivedInIndex === false ? 0 : null,
       lastCrawledDate: result.LastCrawledDate ?? null,
       inIndexDate: result.InIndexDate ?? null,
       inspectedAt: now,
       createdAt: now,
+      documentSize: result.DocumentSize ?? null,
+      anchorCount: result.AnchorCount ?? null,
+      discoveryDate: result.DiscoveryDate ?? null,
     }).run()
 
     return {
       id,
       url,
-      httpCode: result.HttpCode ?? null,
-      inIndex: result.InIndex ?? null,
+      httpCode,
+      inIndex: derivedInIndex,
       lastCrawledDate: result.LastCrawledDate ?? null,
       inIndexDate: result.InIndexDate ?? null,
       inspectedAt: now,
+      documentSize: result.DocumentSize ?? null,
+      anchorCount: result.AnchorCount ?? null,
+      discoveryDate: result.DiscoveryDate ?? null,
     }
   })
 
@@ -388,13 +427,13 @@ export async function bingRoutes(app: FastifyInstance, opts: BingRoutesOptions) 
 
       const unindexedUrls: string[] = []
       for (const [url, row] of latestByUrl) {
-        if (row.inIndex !== 1) {
+        if (row.inIndex === 0) {
           unindexedUrls.push(url)
         }
       }
 
       if (unindexedUrls.length === 0) {
-        const err = validationError('No unindexed URLs found. Run "canonry bing inspect <project> <url>" first.')
+        const err = validationError('No explicitly unindexed URLs found. Run "canonry bing inspect <project> <url>" first.')
         return reply.status(err.statusCode).send(err.toJSON())
       }
 
