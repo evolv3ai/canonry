@@ -14,6 +14,21 @@ import {
   BING_SUBMIT_URL_DAILY_LIMIT,
 } from '@ainyc/canonry-integration-bing'
 
+/**
+ * Convert Bing's /Date(epoch-offset)/ format to an ISO 8601 string.
+ * Returns null if the value is absent or represents the epoch-zero sentinel
+ * (-62135568000000) that Bing uses for "never".
+ */
+function parseBingDate(value: string | undefined | null): string | null {
+  if (!value) return null
+  const match = /\/Date\((-?\d+)[^)]*\)\//.exec(value)
+  if (!match) return null
+  const ms = parseInt(match[1], 10)
+  // Bing uses -62135568000000 as a sentinel for "unknown / never"
+  if (ms <= 0) return null
+  return new Date(ms).toISOString()
+}
+
 function bingLog(level: 'info' | 'warn' | 'error', action: string, ctx?: Record<string, unknown>): void {
   const entry = { ts: new Date().toISOString(), level, module: 'BingRoutes', action, ...ctx }
   const stream = level === 'error' ? process.stderr : process.stdout
@@ -362,19 +377,23 @@ export async function bingRoutes(app: FastifyInstance, opts: BingRoutesOptions) 
           ? true
           : null
 
+    const lastCrawledDate = parseBingDate(result.LastCrawledDate)
+    const inIndexDate = parseBingDate(result.InIndexDate)
+    const discoveryDate = parseBingDate(result.DiscoveryDate)
+
     app.db.insert(bingUrlInspections).values({
       id,
       projectId: project.id,
       url,
       httpCode,
       inIndex: derivedInIndex === true ? 1 : derivedInIndex === false ? 0 : null,
-      lastCrawledDate: result.LastCrawledDate ?? null,
-      inIndexDate: result.InIndexDate ?? null,
+      lastCrawledDate,
+      inIndexDate,
       inspectedAt: now,
       createdAt: now,
       documentSize: result.DocumentSize ?? null,
       anchorCount: result.AnchorCount ?? null,
-      discoveryDate: result.DiscoveryDate ?? null,
+      discoveryDate,
     }).run()
 
     return {
@@ -382,12 +401,12 @@ export async function bingRoutes(app: FastifyInstance, opts: BingRoutesOptions) 
       url,
       httpCode,
       inIndex: derivedInIndex,
-      lastCrawledDate: result.LastCrawledDate ?? null,
-      inIndexDate: result.InIndexDate ?? null,
+      lastCrawledDate,
+      inIndexDate,
       inspectedAt: now,
       documentSize: result.DocumentSize ?? null,
       anchorCount: result.AnchorCount ?? null,
-      discoveryDate: result.DiscoveryDate ?? null,
+      discoveryDate,
     }
   })
 
