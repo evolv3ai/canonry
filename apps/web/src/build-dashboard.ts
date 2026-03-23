@@ -342,23 +342,27 @@ function buildEvidenceFromTimeline(
       }
     }
 
-    // Collect unique providers from snapshots
-    const providers = [...new Set(latestRunDetail.snapshots.map(s => s.provider))].sort()
-    if (providers.length === 0) providers.push('gemini')
+    // Collect unique providers from the full timeline history (not just the latest run)
+    // so that providers that errored or were absent in the latest run still show badges.
+    const providersFromLatestRun = new Set(latestRunDetail.snapshots.map(s => s.provider))
+    const providersFromHistory = new Set(
+      timeline.flatMap(entry =>
+        Object.keys(entry.providerRuns ?? {})
+      )
+    )
+    const allProviders = [...new Set([...providersFromLatestRun, ...providersFromHistory])].sort()
+    const providers = allProviders.length > 0 ? allProviders : ['gemini']
 
     for (const entry of timeline) {
       if (entry.runs.length === 0) continue // never run yet; pending fallback handles it
       seenKeywords.add(entry.keyword)
       const latestRun = entry.runs.at(-1)
       const transition = latestRun?.transition ?? 'not-cited'
-      const citationState: CitationState = transition === 'lost' ? 'lost'
-        : transition === 'emerging' ? 'emerging'
-        : transition === 'cited' ? 'cited'
-        : 'not-cited'
-
       for (const provider of providers) {
         const snap = snapshotsByKey.get(`${entry.keyword}::${provider}`)
-        if (!snap && providers.length > 1) continue
+        // Only skip if provider has zero history for this phrase AND no snapshot in latest run
+        const hasHistory = (entry.providerRuns?.[provider]?.length ?? 0) > 0
+        if (!snap && !hasHistory) continue
 
         // Prefer provider-level history for continuity across model changes; fall back to model-scoped then keyword-level
         const model = snap?.model ?? null
@@ -377,11 +381,15 @@ function buildEvidenceFromTimeline(
           ? effectiveHistory.at(-1)!.transition
           : transition
 
-        const snapState: CitationState = effectiveTransition === 'lost' ? 'lost'
-          : effectiveTransition === 'emerging' ? 'emerging'
-          : snap
-            ? (snap.citationState === 'cited' ? 'cited' : 'not-cited')
-            : citationState
+        // When a provider is missing from the latest run, keep showing its last
+        // observed provider-level state instead of leaking the keyword-level
+        // transition from another provider into this synthetic badge row.
+        const latestProviderState = effectiveHistory?.at(-1)?.citationState
+        const snapState: CitationState = snap
+          ? effectiveTransition === 'lost' ? 'lost'
+            : effectiveTransition === 'emerging' ? 'emerging'
+            : snap.citationState === 'cited' ? 'cited' : 'not-cited'
+          : latestProviderState === 'cited' ? 'cited' : 'not-cited'
 
         const streak = effectiveHistory
           ? computeStreak(effectiveHistory)
