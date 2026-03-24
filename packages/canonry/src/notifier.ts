@@ -1,5 +1,5 @@
 import { eq, desc, and, or } from 'drizzle-orm'
-import { deliverWebhook, resolveWebhookTarget } from '@ainyc/canonry-api-routes'
+import { deliverWebhook, redactNotificationUrl, resolveWebhookTarget } from '@ainyc/canonry-api-routes'
 import type { DatabaseClient } from '@ainyc/canonry-db'
 import { notifications, runs, querySnapshots, keywords, projects, auditLog } from '@ainyc/canonry-db'
 import type { NotificationEvent, WebhookPayload } from '@ainyc/canonry-contracts'
@@ -174,14 +174,15 @@ export class Notifier {
   }
 
   private async sendWebhook(url: string, payload: WebhookPayload, notificationId: string, projectId: string, webhookSecret: string | null): Promise<void> {
+    const targetLabel = redactNotificationUrl(url).urlDisplay
     const targetCheck = await resolveWebhookTarget(url)
     if (!targetCheck.ok) {
-      log.error('webhook.ssrf-blocked', { url, reason: targetCheck.message })
+      log.error('webhook.ssrf-blocked', { url: targetLabel, reason: targetCheck.message })
       this.logDelivery(projectId, notificationId, payload.event, 'failed', `SSRF: ${targetCheck.message}`)
       return
     }
 
-    log.info('webhook.send', { event: payload.event, url })
+    log.info('webhook.send', { event: payload.event, url: targetLabel })
 
     const maxRetries = 3
     const delays = [1000, 4000, 16000]
@@ -191,13 +192,13 @@ export class Notifier {
         const response = await deliverWebhook(targetCheck.target, payload, webhookSecret)
 
         if (response.status >= 200 && response.status < 300) {
-          log.info('webhook.delivered', { event: payload.event, url, httpStatus: response.status })
+          log.info('webhook.delivered', { event: payload.event, url: targetLabel, httpStatus: response.status })
           this.logDelivery(projectId, notificationId, payload.event, 'sent', null)
           return
         }
 
         const errorDetail = response.error ?? `HTTP ${response.status}`
-        log.warn('webhook.attempt-failed', { event: payload.event, url, attempt: attempt + 1, maxRetries, httpStatus: response.status, error: errorDetail })
+        log.warn('webhook.attempt-failed', { event: payload.event, url: targetLabel, attempt: attempt + 1, maxRetries, httpStatus: response.status, error: errorDetail })
         if (attempt === maxRetries - 1) {
           this.logDelivery(projectId, notificationId, payload.event, 'failed', errorDetail)
         }
@@ -205,7 +206,7 @@ export class Notifier {
         const errorDetail = err instanceof Error ? err.message : String(err)
         if (attempt === maxRetries - 1) {
           this.logDelivery(projectId, notificationId, payload.event, 'failed', errorDetail)
-          log.error('webhook.exhausted', { event: payload.event, url, maxRetries, error: errorDetail })
+          log.error('webhook.exhausted', { event: payload.event, url: targetLabel, maxRetries, error: errorDetail })
         }
       }
 

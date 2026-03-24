@@ -192,6 +192,140 @@ describe('canonry', () => {
     }
   })
 
+  it('dashboard password setup and login flow protects the web UI', async () => {
+    const tmpDir = path.join(os.tmpdir(), `canonry-session-${crypto.randomUUID()}`)
+    fs.mkdirSync(tmpDir, { recursive: true })
+    const dbPath = path.join(tmpDir, 'test.db')
+
+    const db = createClient(dbPath)
+    migrate(db)
+
+    const rawKey = `cnry_${crypto.randomBytes(16).toString('hex')}`
+    const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex')
+    db.insert(apiKeys).values({
+      id: crypto.randomUUID(),
+      name: 'test',
+      keyHash,
+      keyPrefix: rawKey.slice(0, 9),
+      scopes: '["*"]',
+      createdAt: new Date().toISOString(),
+    }).run()
+
+    const config = {
+      apiUrl: 'http://localhost:4100',
+      database: dbPath,
+      apiKey: rawKey,
+      geminiApiKey: 'test-key',
+    }
+
+    const app = await createServer({ config, db, logger: false })
+
+    try {
+      // API routes require auth
+      const unauthRes = await app.inject({
+        method: 'GET',
+        url: '/api/v1/projects',
+      })
+      expect(unauthRes.statusCode).toBe(401)
+
+      // Session check reports setup is required (no password yet)
+      const preSetupSession = await app.inject({
+        method: 'GET',
+        url: '/api/v1/session',
+      })
+      expect(preSetupSession.statusCode).toBe(200)
+      const preSetup = JSON.parse(preSetupSession.body) as { authenticated: boolean; setupRequired: boolean }
+      expect(preSetup.authenticated).toBe(false)
+      expect(preSetup.setupRequired).toBe(true)
+
+      // Setup rejects short passwords
+      const shortPwRes = await app.inject({
+        method: 'POST',
+        url: '/api/v1/session/setup',
+        payload: { password: 'short' },
+      })
+      expect(shortPwRes.statusCode).toBe(400)
+
+      // Setup with valid password creates session
+      const dashboardPassword = 'my-secure-dashboard-password'
+      const setupRes = await app.inject({
+        method: 'POST',
+        url: '/api/v1/session/setup',
+        payload: { password: dashboardPassword },
+      })
+      expect(setupRes.statusCode).toBe(200)
+      expect(JSON.parse(setupRes.body)).toEqual({ authenticated: true })
+
+      const setupCookie = setupRes.headers['set-cookie']
+      const cookieHeader = (Array.isArray(setupCookie) ? setupCookie[0] : setupCookie)?.split(';')[0]
+      expect(cookieHeader).toContain('canonry_session=')
+
+      // Password hash is persisted in config
+      expect(config.dashboardPasswordHash).toBeTruthy()
+
+      // Setup endpoint rejects second call (password already set)
+      const doubleSetup = await app.inject({
+        method: 'POST',
+        url: '/api/v1/session/setup',
+        payload: { password: 'another-password' },
+      })
+      expect(doubleSetup.statusCode).toBe(400)
+
+      // Session cookie grants API access
+      const authedRes = await app.inject({
+        method: 'GET',
+        url: '/api/v1/projects',
+        headers: { cookie: cookieHeader! },
+      })
+      expect(authedRes.statusCode).toBe(200)
+
+      // HTML never contains the raw API key
+      const htmlRes = await app.inject({
+        method: 'GET',
+        url: '/',
+      })
+      if (htmlRes.statusCode === 200) {
+        expect(htmlRes.body).toContain('__CANONRY_CONFIG__')
+      }
+      expect(htmlRes.body).not.toContain(rawKey)
+
+      // Logout invalidates the session
+      const logoutRes = await app.inject({
+        method: 'DELETE',
+        url: '/api/v1/session',
+        headers: { cookie: cookieHeader! },
+      })
+      expect(logoutRes.statusCode).toBe(204)
+
+      const afterLogoutRes = await app.inject({
+        method: 'GET',
+        url: '/api/v1/projects',
+        headers: { cookie: cookieHeader! },
+      })
+      expect(afterLogoutRes.statusCode).toBe(401)
+
+      // Login with password works after setup
+      const loginRes = await app.inject({
+        method: 'POST',
+        url: '/api/v1/session',
+        payload: { password: dashboardPassword },
+      })
+      expect(loginRes.statusCode).toBe(200)
+      expect(JSON.parse(loginRes.body)).toEqual({ authenticated: true })
+
+      // Wrong password is rejected
+      const badLoginRes = await app.inject({
+        method: 'POST',
+        url: '/api/v1/session',
+        payload: { password: 'wrong-password' },
+      })
+      expect(badLoginRes.statusCode).toBe(401)
+    } finally {
+      await app.close()
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })
+
   it('API flow: create and get project via inject', async () => {
     const tmpDir = path.join(os.tmpdir(), `canonry-test-${crypto.randomUUID()}`)
     fs.mkdirSync(tmpDir, { recursive: true })

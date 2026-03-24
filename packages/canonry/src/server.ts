@@ -3,20 +3,21 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { eq } from 'drizzle-orm'
 
 const _require = createRequire(import.meta.url)
 const { version: PKG_VERSION } = _require('../package.json') as { version: string }
 import Fastify from 'fastify'
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { apiRoutes } from '@ainyc/canonry-api-routes'
-import { auditLog, projects, type DatabaseClient } from '@ainyc/canonry-db'
+import { apiKeys, auditLog, projects, type DatabaseClient } from '@ainyc/canonry-db'
 import { geminiAdapter } from '@ainyc/canonry-provider-gemini'
 import { openaiAdapter } from '@ainyc/canonry-provider-openai'
 import { claudeAdapter } from '@ainyc/canonry-provider-claude'
 import { localAdapter } from '@ainyc/canonry-provider-local'
 import { cdpChatgptAdapter } from '@ainyc/canonry-provider-cdp'
 import { perplexityAdapter } from '@ainyc/canonry-provider-perplexity'
-import type { ProviderAdapter } from '@ainyc/canonry-contracts'
+import { authInvalid, validationError, type ProviderAdapter } from '@ainyc/canonry-contracts'
 import type { CanonryConfig, ProviderConfigEntry } from './config.js'
 import { saveConfig, loadConfig } from './config.js'
 import {
@@ -51,6 +52,14 @@ const DEFAULT_QUOTA = {
   maxRequestsPerDay: 1000,
 }
 
+const SESSION_COOKIE_NAME = 'canonry_session'
+const SESSION_TTL_MS = 12 * 60 * 60 * 1000
+
+interface SessionRecord {
+  apiKeyId: string
+  expiresAt: number
+}
+
 /** All known API adapters — add new providers here */
 const API_ADAPTERS: ProviderAdapter[] = [
   geminiAdapter, openaiAdapter, claudeAdapter, localAdapter, perplexityAdapter,
@@ -77,6 +86,59 @@ function summarizeProviderConfig(
     baseUrl: provider === 'local' ? config?.baseUrl ?? null : null,
     quota: { ...(config?.quota ?? DEFAULT_QUOTA) },
   }
+}
+
+function hashApiKey(key: string): string {
+  return crypto.createHash('sha256').update(key).digest('hex')
+}
+
+function parseCookies(header: string | undefined): Record<string, string> {
+  if (!header) return {}
+
+  return header
+    .split(';')
+    .map(part => part.trim())
+    .filter(Boolean)
+    .reduce<Record<string, string>>((cookies, part) => {
+      const eqIdx = part.indexOf('=')
+      if (eqIdx <= 0) return cookies
+      const name = part.slice(0, eqIdx).trim()
+      const value = part.slice(eqIdx + 1).trim()
+      if (!name) return cookies
+      try {
+        cookies[name] = decodeURIComponent(value)
+      } catch {
+        cookies[name] = value
+      }
+      return cookies
+    }, {})
+}
+
+function serializeSessionCookie(opts: {
+  name: string
+  value: string | null
+  path: string
+  secure: boolean
+  ttlMs: number
+}): string {
+  const parts = [
+    `${opts.name}=${opts.value ? encodeURIComponent(opts.value) : ''}`,
+    `Path=${opts.path}`,
+    'HttpOnly',
+    'SameSite=Lax',
+  ]
+
+  if (opts.value) {
+    parts.push(`Max-Age=${Math.floor(opts.ttlMs / 1000)}`)
+  } else {
+    parts.push('Max-Age=0')
+  }
+
+  if (opts.secure) {
+    parts.push('Secure')
+  }
+
+  return parts.join('; ')
 }
 
 export async function createServer(opts: {
@@ -321,11 +383,200 @@ export async function createServer(opts: {
   // If the proxy does strip the prefix, set CANONRY_BASE_PATH to empty/unset and
   // let the proxy handle path rewriting instead.
   const apiPrefix = basePath ? `${basePath}api/v1` : '/api/v1'
+  // Ensure the configured API key exists in the DB — handles upgrades from
+  // older versions that stored the key in config.yaml but never inserted it
+  // into the api_keys table (or used a different DB file).
+  if (opts.config.apiKey) {
+    const keyHash = hashApiKey(opts.config.apiKey)
+    const existing = opts.db.select().from(apiKeys).where(eq(apiKeys.keyHash, keyHash)).get()
+    if (!existing) {
+      const prefix = opts.config.apiKey.slice(0, 12)
+      opts.db.insert(apiKeys).values({
+        id: `key_${crypto.randomBytes(8).toString('hex')}`,
+        name: 'default',
+        keyHash,
+        keyPrefix: prefix,
+        scopes: JSON.stringify(['*']),
+        createdAt: new Date().toISOString(),
+      }).run()
+    }
+  }
+
+  const sessionCookiePath = basePath ?? '/'
+  const sessionCookieSecure = Boolean(
+    opts.config.publicUrl?.startsWith('https://')
+      || opts.config.apiUrl?.startsWith('https://'),
+  )
+  const sessions = new Map<string, SessionRecord>()
+
+  const pruneExpiredSessions = () => {
+    const now = Date.now()
+    for (const [sessionId, session] of sessions.entries()) {
+      if (session.expiresAt <= now) {
+        sessions.delete(sessionId)
+      }
+    }
+  }
+
+  const createSession = (apiKeyId: string) => {
+    pruneExpiredSessions()
+    const sessionId = crypto.randomBytes(32).toString('hex')
+    sessions.set(sessionId, {
+      apiKeyId,
+      expiresAt: Date.now() + SESSION_TTL_MS,
+    })
+    return sessionId
+  }
+
+  const resolveSessionApiKeyId = (sessionId: string) => {
+    pruneExpiredSessions()
+    const session = sessions.get(sessionId)
+    if (!session) return null
+    if (session.expiresAt <= Date.now()) {
+      sessions.delete(sessionId)
+      return null
+    }
+    return session.apiKeyId
+  }
+
+  const clearSession = (sessionId: string | undefined) => {
+    if (sessionId) {
+      sessions.delete(sessionId)
+    }
+  }
+
+  // Resolve the default API key record once — used by password-based sessions
+  // to bind the session to the server's configured key.
+  const getDefaultApiKey = () => {
+    if (!opts.config.apiKey) return undefined
+    return opts.db
+      .select()
+      .from(apiKeys)
+      .where(eq(apiKeys.keyHash, hashApiKey(opts.config.apiKey)))
+      .get()
+  }
+
+  const createPasswordSession = (reply: FastifyReply) => {
+    const key = getDefaultApiKey()
+    if (!key || key.revokedAt) return false
+
+    const sessionId = createSession(key.id)
+    reply.header('set-cookie', serializeSessionCookie({
+      name: SESSION_COOKIE_NAME,
+      value: sessionId,
+      path: sessionCookiePath,
+      secure: sessionCookieSecure,
+      ttlMs: SESSION_TTL_MS,
+    }))
+    return true
+  }
+
+  app.get(apiPrefix + '/session', async (request, reply) => {
+    const sessionId = parseCookies(request.headers.cookie)[SESSION_COOKIE_NAME]
+    return reply.send({
+      authenticated: Boolean(sessionId && resolveSessionApiKeyId(sessionId)),
+      setupRequired: !opts.config.dashboardPasswordHash,
+    })
+  })
+
+  // One-time password setup — only works when no password is configured yet.
+  app.post<{
+    Body: { password?: string }
+  }>(apiPrefix + '/session/setup', async (request, reply) => {
+    if (opts.config.dashboardPasswordHash) {
+      const err = validationError('Dashboard password is already configured')
+      return reply.status(err.statusCode).send(err.toJSON())
+    }
+
+    const password = request.body?.password?.trim()
+    if (!password || password.length < 8) {
+      const err = validationError('Password must be at least 8 characters')
+      return reply.status(err.statusCode).send(err.toJSON())
+    }
+
+    opts.config.dashboardPasswordHash = hashApiKey(password)
+    saveConfig(opts.config)
+
+    if (!createPasswordSession(reply)) {
+      const err = authInvalid()
+      return reply.status(err.statusCode).send(err.toJSON())
+    }
+    return reply.send({ authenticated: true })
+  })
+
+  // Login with dashboard password or API key.
+  app.post<{
+    Body: { password?: string; apiKey?: string }
+  }>(apiPrefix + '/session', async (request, reply) => {
+    const password = request.body?.password?.trim()
+    const apiKey = request.body?.apiKey?.trim()
+
+    if (password) {
+      if (!opts.config.dashboardPasswordHash) {
+        const err = validationError('No dashboard password configured — use /session/setup first')
+        return reply.status(err.statusCode).send(err.toJSON())
+      }
+      if (hashApiKey(password) !== opts.config.dashboardPasswordHash) {
+        return reply.status(401).send({ error: { code: 'AUTH_INVALID', message: 'Incorrect password' } })
+      }
+      if (!createPasswordSession(reply)) {
+        return reply.status(401).send({ error: { code: 'AUTH_INVALID', message: 'Server API key not found — re-run canonry init' } })
+      }
+      return reply.send({ authenticated: true })
+    }
+
+    if (apiKey) {
+      const key = opts.db
+        .select()
+        .from(apiKeys)
+        .where(eq(apiKeys.keyHash, hashApiKey(apiKey)))
+        .get()
+
+      if (!key || key.revokedAt) {
+        const err = authInvalid()
+        return reply.status(err.statusCode).send(err.toJSON())
+      }
+
+      opts.db
+        .update(apiKeys)
+        .set({ lastUsedAt: new Date().toISOString() })
+        .where(eq(apiKeys.id, key.id))
+        .run()
+
+      const sessionId = createSession(key.id)
+      reply.header('set-cookie', serializeSessionCookie({
+        name: SESSION_COOKIE_NAME,
+        value: sessionId,
+        path: sessionCookiePath,
+        secure: sessionCookieSecure,
+        ttlMs: SESSION_TTL_MS,
+      }))
+      return reply.send({ authenticated: true })
+    }
+
+    const err = validationError('Either password or apiKey is required')
+    return reply.status(err.statusCode).send(err.toJSON())
+  })
+
+  app.delete(apiPrefix + '/session', async (request, reply) => {
+    const sessionId = parseCookies(request.headers.cookie)[SESSION_COOKIE_NAME]
+    clearSession(sessionId)
+    reply.header('set-cookie', serializeSessionCookie({
+      name: SESSION_COOKIE_NAME,
+      value: null,
+      path: sessionCookiePath,
+      secure: sessionCookieSecure,
+      ttlMs: SESSION_TTL_MS,
+    }))
+    return reply.status(204).send()
+  })
 
   await app.register(apiRoutes, {
     db: opts.db,
     routePrefix: apiPrefix,
     skipAuth: false,
+    sessionCookieName: SESSION_COOKIE_NAME,
+    resolveSessionApiKeyId,
     getGoogleAuthConfig: () => getGoogleAuthConfig(opts.config),
     googleConnectionStore,
     googleStateSecret,
@@ -589,7 +840,7 @@ export async function createServer(opts: {
 
     // basePath is already resolved above. Used here for SPA serving.
     const injectConfig = (html: string): string => {
-      const clientConfig: Record<string, unknown> = { apiKey: opts.config.apiKey }
+      const clientConfig: Record<string, unknown> = {}
       if (basePath) clientConfig.basePath = basePath
 
       const configScript = `<script>window.__CANONRY_CONFIG__=${JSON.stringify(clientConfig)}</script>`
@@ -612,7 +863,7 @@ export async function createServer(opts: {
     // Serve index.html with injected config for the root/base-path route.
     // Register both the trailing-slash form ('/canonry/') and the bare form
     // ('/canonry') so either URL shape hits the handler without a 404.
-    const serveIndex = (_request: unknown, reply: { type: (t: string) => { send: (b: string) => unknown }; status: (s: number) => { send: (b: unknown) => unknown } }) => {
+    const serveIndex = (_request: FastifyRequest, reply: FastifyReply) => {
       if (fs.existsSync(indexPath)) {
         const html = fs.readFileSync(indexPath, 'utf-8')
         return reply.type('text/html').send(injectConfig(html))
