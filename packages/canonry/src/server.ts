@@ -182,15 +182,19 @@ export async function createServer(opts: {
 
   log.info('providers.configured', { providers: Object.keys(providers).filter(k => {
     const p = providers[k]
-    return p?.apiKey || p?.baseUrl
+    return p?.apiKey || p?.baseUrl || p?.vertexProject
   }) })
 
   // Register API providers from config
   for (const adapter of API_ADAPTERS) {
     const entry = providers[adapter.name]
     if (!entry) continue
-    // Local provider requires baseUrl; others require apiKey
-    const isConfigured = adapter.name === 'local' ? !!entry.baseUrl : !!entry.apiKey
+    // Local provider requires baseUrl; Gemini can use apiKey OR vertexProject; others require apiKey
+    const isConfigured = adapter.name === 'local'
+      ? !!entry.baseUrl
+      : adapter.name === 'gemini'
+        ? !!(entry.apiKey || entry.vertexProject)
+        : !!entry.apiKey
     if (isConfigured) {
       registry.register(adapter, {
         provider: adapter.name,
@@ -198,6 +202,9 @@ export async function createServer(opts: {
         baseUrl: entry.baseUrl,
         model: entry.model,
         quotaPolicy: entry.quota ?? DEFAULT_QUOTA,
+        vertexProject: entry.vertexProject,
+        vertexRegion: entry.vertexRegion,
+        vertexCredentials: entry.vertexCredentials,
       })
     }
   }
@@ -239,6 +246,7 @@ export async function createServer(opts: {
     model: registry.get(adapter.name)?.config.model,
     configured: !!registry.get(adapter.name),
     quota: registry.get(adapter.name)?.config.quotaPolicy,
+    vertexConfigured: adapter.name === 'gemini' ? !!opts.config.providers?.gemini?.vertexProject : undefined,
   }))
   const googleSettingsSummary = {
     configured: Boolean(opts.config.google?.clientId && opts.config.google?.clientSecret),
@@ -645,6 +653,11 @@ export async function createServer(opts: {
         baseUrl: baseUrl || existing?.baseUrl,
         model: model || existing?.model,
         quota: mergedQuota,
+        // Preserve Vertex AI config (Gemini provider) — these are set via
+        // config file or env vars, not through the dashboard update payload
+        vertexProject: existing?.vertexProject,
+        vertexRegion: existing?.vertexRegion,
+        vertexCredentials: existing?.vertexCredentials,
       }
 
       try {
@@ -662,6 +675,9 @@ export async function createServer(opts: {
         baseUrl: baseUrl || existing?.baseUrl,
         model: model || existing?.model,
         quotaPolicy: quota,
+        vertexProject: existing?.vertexProject,
+        vertexRegion: existing?.vertexRegion,
+        vertexCredentials: existing?.vertexCredentials,
       })
 
       // Update the providerSummary array in-place
@@ -670,6 +686,9 @@ export async function createServer(opts: {
         entry.configured = true
         entry.model = model || registry.get(name)?.config.model
         entry.quota = quota
+        if (name === 'gemini') {
+          entry.vertexConfigured = !!opts.config.providers?.[name]?.vertexProject
+        }
       }
 
       const afterConfig = summarizeProviderConfig(name, opts.config.providers[name])

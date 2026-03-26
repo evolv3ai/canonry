@@ -13,6 +13,8 @@ export interface ProviderSummaryEntry {
   model?: string
   configured: boolean
   quota?: ProviderQuotaPolicy
+  /** Whether Vertex AI is configured for this provider (Gemini only) */
+  vertexConfigured?: boolean
 }
 
 export interface GoogleSettingsSummary {
@@ -70,10 +72,21 @@ export async function settingsRoutes(app: FastifyInstance, opts: SettingsRoutesO
       return reply.status(err.statusCode).send(err.toJSON())
     }
 
-    // Local provider requires baseUrl; others require apiKey
+    // Local provider requires baseUrl; others require apiKey (except gemini which
+    // can be configured via Vertex AI project in config file / env vars instead)
     if (name === 'local') {
       if (!baseUrl || typeof baseUrl !== 'string') {
         const err = validationError('baseUrl is required for local provider')
+        return reply.status(err.statusCode).send(err.toJSON())
+      }
+    } else if (name === 'gemini' && !apiKey) {
+      // Gemini allows empty apiKey only when Vertex AI is already configured
+      const geminiSummary = (opts.providerSummary ?? []).find(p => p.name === 'gemini')
+      if (!geminiSummary?.vertexConfigured) {
+        const err = validationError(
+          'apiKey is required for Gemini unless Vertex AI is configured ' +
+          '(set GEMINI_VERTEX_PROJECT env var or vertexProject in config file)',
+        )
         return reply.status(err.statusCode).send(err.toJSON())
       }
     } else {
