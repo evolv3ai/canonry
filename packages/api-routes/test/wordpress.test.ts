@@ -117,6 +117,7 @@ describe('WordPress routes', () => {
       pageCount: 12,
       version: '6.8.1',
       plugins: [],
+      authenticatedUser: { id: 1, slug: 'admin' },
     })
     vi.spyOn(wordpressModule, 'getSiteStatus').mockResolvedValue({
       url: 'https://example.com',
@@ -124,6 +125,7 @@ describe('WordPress routes', () => {
       pageCount: 12,
       version: '6.8.1',
       plugins: ['wordpress-seo/wp-seo.php'],
+      authenticatedUser: { id: 1, slug: 'admin' },
     })
 
     const connectRes = await app.inject({
@@ -170,6 +172,35 @@ describe('WordPress routes', () => {
 
     expect(disconnectRes.statusCode).toBe(204)
     expect(connections.has('test-project')).toBe(false)
+  })
+
+  it('returns an actionable error when wordpress connect fails with invalid credentials', async () => {
+    const wordpressModule = await import('@ainyc/canonry-integration-wordpress')
+    vi.spyOn(wordpressModule, 'verifyWordpressConnection').mockRejectedValue(
+      new WordpressApiError(
+        'AUTH_INVALID',
+        'Authentication failed — the username or application password is incorrect. Verify the app password belongs to the user specified with --user.',
+        401,
+      ),
+    )
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/projects/test-project/wordpress/connect',
+      payload: {
+        url: 'https://example.com/',
+        username: 'admin',
+        appPassword: 'app-pass',
+      },
+    })
+
+    expect(res.statusCode).toBe(401)
+    expect(res.json()).toEqual({
+      error: {
+        code: 'AUTH_INVALID',
+        message: 'Authentication failed — the username or application password is incorrect. Verify the app password belongs to the user specified with --user.',
+      },
+    })
   })
 
   it('passes the requested environment through page listing routes', async () => {

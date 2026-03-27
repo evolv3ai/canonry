@@ -54,3 +54,4 @@ canonry wordpress staging push mysite
 - Canonry does not use wp-admin automation or undocumented plugin APIs
 - If SEO meta is not writable through REST, canonry returns an actionable error instead of guessing
 - Duplicate slug matches are returned as explicit ambiguity errors with candidate page IDs/titles
+- Authentication is verified on connect by calling `/wp/v2/users/me` — if that fails, canonry returns an actionable error message

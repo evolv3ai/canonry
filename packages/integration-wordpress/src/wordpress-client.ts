@@ -19,6 +19,7 @@ import { WordpressApiError } from './types.js'
 const PAGE_FIELDS = 'id,slug,status,link,modified,modified_gmt,title,content,meta'
 const PAGE_LIST_FIELDS = 'id,slug,status,link,modified,modified_gmt,title'
 const VERIFY_PAGE_FIELDS = 'id,status'
+const VERIFY_USER_FIELDS = 'id,slug'
 const SEO_TARGETS = [
   {
     pluginHints: ['wordpress-seo', 'yoast'],
@@ -49,6 +50,29 @@ function encodeBasicAuth(username: string, appPassword: string): string {
   return Buffer.from(`${username}:${appPassword}`).toString('base64')
 }
 
+function buildAuthErrorMessage(res: Response, responseText: string): string {
+  let wordpressCode: string | null = null
+  try {
+    const parsed = JSON.parse(responseText) as unknown
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const payload = parsed as Record<string, unknown>
+      if (typeof payload.code === 'string') wordpressCode = payload.code
+    }
+  } catch {
+    // ignore parse errors
+  }
+
+  if (res.status === 401 && wordpressCode === 'rest_not_logged_in') {
+    return 'Authentication failed — the username or application password is incorrect. Verify the app password belongs to the user specified with --user.'
+  }
+
+  if ((res.status === 401 || res.status === 403) && wordpressCode) {
+    return 'Authenticated but lacking permission — check that the user has Administrator or Editor role.'
+  }
+
+  return 'WordPress credentials are invalid or lack permission for this action'
+}
+
 async function fetchJson<T>(
   connection: WordpressConnectionRecord,
   siteUrl: string,
@@ -65,7 +89,8 @@ async function fetchJson<T>(
   })
 
   if (res.status === 401 || res.status === 403) {
-    throw new WordpressApiError('AUTH_INVALID', 'WordPress credentials are invalid or lack permission for this action', res.status)
+    const text = await res.text().catch(() => '')
+    throw new WordpressApiError('AUTH_INVALID', buildAuthErrorMessage(res, text), res.status)
   }
 
   if (res.status === 404) {
@@ -81,6 +106,18 @@ async function fetchJson<T>(
     body: (await res.json()) as T,
     response: res,
   }
+}
+
+async function verifyAuthenticatedRestAccess(
+  connection: WordpressConnectionRecord,
+  siteUrl: string,
+): Promise<{ id: number; slug: string }> {
+  const { body } = await fetchJson<{ id: number; slug: string }>(
+    connection,
+    siteUrl,
+    `/wp-json/wp/v2/users/me?_fields=${VERIFY_USER_FIELDS}`,
+  )
+  return { id: body.id, slug: body.slug }
 }
 
 async function fetchPageCollectionSummary(
@@ -299,6 +336,7 @@ export async function verifyWordpressConnection(
   connection: WordpressConnectionRecord,
 ): Promise<WordpressSiteStatusDto> {
   const site = resolveEnvironment({ ...connection, defaultEnv: 'live' }, 'live')
+  const userInfo = await verifyAuthenticatedRestAccess(connection, site.siteUrl)
   const response = await fetchPageCollectionSummary(connection, site.siteUrl, { context: 'view' })
   const homeHtml = await fetchText(site.siteUrl)
   return {
@@ -307,6 +345,7 @@ export async function verifyWordpressConnection(
     pageCount: Number.parseInt(response.headers.get('x-wp-total') ?? '0', 10) || 0,
     version: homeHtml ? extractGeneratorVersion(homeHtml) : null,
     plugins: [],
+    authenticatedUser: userInfo,
   }
 }
 
@@ -316,6 +355,7 @@ export async function getSiteStatus(
 ): Promise<WordpressSiteStatusDto> {
   const site = resolveEnvironment(connection, env)
   try {
+    const userInfo = await verifyAuthenticatedRestAccess(connection, site.siteUrl)
     const response = await fetchPageCollectionSummary(connection, site.siteUrl, { context: 'view' })
     const homeHtml = await fetchText(site.siteUrl)
     const plugins = await listActivePlugins(connection, env)
@@ -325,6 +365,7 @@ export async function getSiteStatus(
       pageCount: Number.parseInt(response.headers.get('x-wp-total') ?? '0', 10) || 0,
       version: homeHtml ? extractGeneratorVersion(homeHtml) : null,
       plugins: plugins ?? [],
+      authenticatedUser: userInfo,
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

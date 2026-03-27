@@ -136,6 +136,9 @@ describe('wordpress CLI commands', () => {
       if (url.startsWith(harness.serverUrl)) {
         return originalFetch(input, init)
       }
+      if (url.includes('/wp-json/wp/v2/users/me?')) {
+        return jsonResponse({ id: 1, slug: 'admin' })
+      }
       if (url.includes('/wp-json/wp/v2/plugins')) {
         return new Response('Not found', { status: 404 })
       }
@@ -195,6 +198,59 @@ describe('wordpress CLI commands', () => {
       username: 'admin',
       appPassword: 'interactive-app-pass',
     })
+  })
+
+  it('shows an actionable error when wordpress connect fails with invalid credentials', async () => {
+    originalConfigDir = process.env.CANONRY_CONFIG_DIR
+    originalFetch = globalThis.fetch
+
+    const harness = await startHarness()
+    closeHarness = harness.close
+    process.env.CANONRY_CONFIG_DIR = harness.tmpDir
+
+    globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.startsWith(harness.serverUrl)) {
+        return originalFetch(input, init)
+      }
+      if (url.includes('/wp-json/wp/v2/users/me?')) {
+        return new Response(
+          JSON.stringify({
+            code: 'rest_not_logged_in',
+            message: 'You are not currently logged in.',
+            data: { status: 401 },
+          }),
+          {
+            status: 401,
+            headers: {
+              'content-type': 'application/json',
+            },
+          },
+        )
+      }
+      throw new Error(`Unhandled URL: ${url}`)
+    }
+
+    const result = await invokeCli([
+      'wordpress',
+      'connect',
+      'test-proj',
+      '--url',
+      'https://example.com',
+      '--user',
+      'admin',
+      '--app-password',
+      'app-pass',
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr).toContain('Authentication failed')
+    expect(result.stderr).toContain('application password is incorrect')
+
+    const stored = parse(fs.readFileSync(harness.configPath, 'utf-8')) as {
+      wordpress?: { connections?: Array<{ projectName: string }> }
+    }
+    expect(stored.wordpress?.connections ?? []).toHaveLength(0)
   })
 
   it('routes wordpress pages to the staging environment when --staging is provided', async () => {
