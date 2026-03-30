@@ -7,6 +7,7 @@ import {
   GA4_MAX_SYNC_DAYS,
 } from './constants.js'
 import type {
+  GA4AiReferralRow,
   GA4RunReportRequest,
   GA4RunReportResponse,
   GA4TrafficRow,
@@ -176,6 +177,16 @@ async function batchRunReports(
 function formatDate(d: Date): string {
   return d.toISOString().split('T')[0]!
 }
+
+const AI_REFERRAL_SOURCE_FILTERS: Array<{ matchType: 'CONTAINS' | 'EXACT'; value: string }> = [
+  { matchType: 'CONTAINS', value: 'perplexity' },
+  { matchType: 'CONTAINS', value: 'gemini' },
+  { matchType: 'CONTAINS', value: 'chatgpt' },
+  { matchType: 'CONTAINS', value: 'openai' },
+  { matchType: 'CONTAINS', value: 'claude' },
+  { matchType: 'CONTAINS', value: 'anthropic' },
+  { matchType: 'CONTAINS', value: 'copilot' },
+]
 
 /**
  * Fetch landing page traffic data for the given number of days.
@@ -365,4 +376,79 @@ export async function fetchAggregateSummary(
 
   ga4Log('info', 'fetch-aggregate.done', { propertyId, ...summary })
   return summary
+}
+
+/**
+ * Fetch traffic specifically from AI referral sources.
+ */
+export async function fetchAiReferrals(
+  accessToken: string,
+  propertyId: string,
+  days?: number,
+): Promise<GA4AiReferralRow[]> {
+  const syncDays = Math.min(Math.max(1, days ?? GA4_DEFAULT_SYNC_DAYS), GA4_MAX_SYNC_DAYS)
+  const endDate = new Date()
+  const startDate = new Date()
+  startDate.setDate(startDate.getDate() - syncDays)
+
+  ga4Log('info', 'fetch-ai-referrals.start', { propertyId, days: syncDays })
+
+  // Use explicit AI referrer patterns only. Generic search-engine sources such as
+  // plain "bing" are intentionally excluded because they would misclassify normal
+  // search traffic as AI traffic.
+  const PAGE_SIZE = 1000
+  const rows: GA4AiReferralRow[] = []
+  let offset = 0
+
+  while (true) {
+    const request: GA4RunReportRequest = {
+      dateRanges: [{ startDate: formatDate(startDate), endDate: formatDate(endDate) }],
+      dimensions: [
+        { name: 'date' },
+        { name: 'sessionSource' },
+        { name: 'sessionMedium' },
+      ],
+      metrics: [
+        { name: 'sessions' },
+        { name: 'totalUsers' },
+      ],
+      dimensionFilter: {
+        orGroup: {
+          expressions: AI_REFERRAL_SOURCE_FILTERS.map(({ matchType, value }) => ({
+            filter: {
+              fieldName: 'sessionSource',
+              stringFilter: { matchType, value },
+            },
+          })),
+        },
+      },
+      limit: PAGE_SIZE,
+      offset,
+    }
+
+    const response = await runReport(accessToken, propertyId, request)
+    const pageRows = (response.rows ?? []).map((row) => ({
+      date: row.dimensionValues[0]!.value,
+      source: row.dimensionValues[1]!.value,
+      medium: row.dimensionValues[2]!.value,
+      sessions: parseInt(row.metricValues[0]!.value, 10) || 0,
+      users: parseInt(row.metricValues[1]!.value, 10) || 0,
+    }))
+
+    rows.push(...pageRows)
+
+    const totalRows = response.rowCount ?? 0
+    offset += pageRows.length
+    if (pageRows.length < PAGE_SIZE || offset >= totalRows) break
+  }
+
+  // Convert YYYYMMDD to YYYY-MM-DD
+  for (const row of rows) {
+    if (row.date.length === 8 && !row.date.includes('-')) {
+      row.date = `${row.date.slice(0, 4)}-${row.date.slice(4, 6)}-${row.date.slice(6, 8)}`
+    }
+  }
+
+  ga4Log('info', 'fetch-ai-referrals.done', { propertyId, rowCount: rows.length })
+  return rows
 }

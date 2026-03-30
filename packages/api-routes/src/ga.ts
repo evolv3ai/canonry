@@ -1,13 +1,14 @@
 import crypto from 'node:crypto'
 import { eq, desc, and, sql } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
-import { gaTrafficSnapshots, gaTrafficSummaries } from '@ainyc/canonry-db'
+import { gaTrafficSnapshots, gaTrafficSummaries, gaAiReferrals } from '@ainyc/canonry-db'
 import { validationError, notFound } from '@ainyc/canonry-contracts'
 import { resolveProject, writeAuditLog } from './helpers.js'
 import {
   getAccessToken,
   fetchTrafficByLandingPage,
   fetchAggregateSummary,
+  fetchAiReferrals,
   verifyConnection,
 } from '@ainyc/canonry-integration-google-analytics'
 
@@ -132,12 +133,15 @@ export async function ga4Routes(app: FastifyInstance, opts: GA4RoutesOptions) {
       return reply.status(err.statusCode).send(err.toJSON())
     }
 
-    // Delete traffic data and summary along with connection
+    // Delete traffic data, summaries, and AI referral rows along with the connection.
     app.db.delete(gaTrafficSnapshots)
       .where(eq(gaTrafficSnapshots.projectId, project.id))
       .run()
     app.db.delete(gaTrafficSummaries)
       .where(eq(gaTrafficSummaries.projectId, project.id))
+      .run()
+    app.db.delete(gaAiReferrals)
+      .where(eq(gaAiReferrals.projectId, project.id))
       .run()
 
     store.deleteConnection(project.name)
@@ -166,10 +170,10 @@ export async function ga4Routes(app: FastifyInstance, opts: GA4RoutesOptions) {
     }
 
     const latestSync = app.db
-      .select({ syncedAt: gaTrafficSnapshots.syncedAt })
-      .from(gaTrafficSnapshots)
-      .where(eq(gaTrafficSnapshots.projectId, project.id))
-      .orderBy(desc(gaTrafficSnapshots.syncedAt))
+      .select({ syncedAt: gaTrafficSummaries.syncedAt })
+      .from(gaTrafficSummaries)
+      .where(eq(gaTrafficSummaries.projectId, project.id))
+      .orderBy(desc(gaTrafficSummaries.syncedAt))
       .limit(1)
       .get()
 
@@ -213,10 +217,12 @@ export async function ga4Routes(app: FastifyInstance, opts: GA4RoutesOptions) {
 
     let rows
     let summary
+    let aiReferrals
     try {
-      ;[rows, summary] = await Promise.all([
+      ;[rows, summary, aiReferrals] = await Promise.all([
         fetchTrafficByLandingPage(accessToken, conn.propertyId, days),
         fetchAggregateSummary(accessToken, conn.propertyId, days),
+        fetchAiReferrals(accessToken, conn.propertyId, days),
       ])
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -229,21 +235,17 @@ export async function ga4Routes(app: FastifyInstance, opts: GA4RoutesOptions) {
     // Clear old data for this project in the synced date range, then insert fresh
     // Wrapped in a transaction to ensure atomicity — a crash mid-insert won't lose data
     app.db.transaction((tx) => {
+      tx.delete(gaTrafficSnapshots)
+        .where(
+          and(
+            eq(gaTrafficSnapshots.projectId, project.id),
+            sql`${gaTrafficSnapshots.date} >= ${summary.periodStart}`,
+            sql`${gaTrafficSnapshots.date} <= ${summary.periodEnd}`,
+          ),
+        )
+        .run()
+
       if (rows.length > 0) {
-        const dates = rows.map((r: { date: string }) => r.date)
-        const minDate = dates.reduce((a: string, b: string) => (a < b ? a : b))
-        const maxDate = dates.reduce((a: string, b: string) => (a > b ? a : b))
-
-        tx.delete(gaTrafficSnapshots)
-          .where(
-            and(
-              eq(gaTrafficSnapshots.projectId, project.id),
-              sql`${gaTrafficSnapshots.date} >= ${minDate}`,
-              sql`${gaTrafficSnapshots.date} <= ${maxDate}`,
-            ),
-          )
-          .run()
-
         for (const row of rows) {
           tx.insert(gaTrafficSnapshots).values({
             id: crypto.randomUUID(),
@@ -252,6 +254,32 @@ export async function ga4Routes(app: FastifyInstance, opts: GA4RoutesOptions) {
             landingPage: row.landingPage,
             sessions: row.sessions,
             organicSessions: row.organicSessions,
+            users: row.users,
+            syncedAt: now,
+          }).run()
+        }
+      }
+
+      tx.delete(gaAiReferrals)
+        .where(
+          and(
+            eq(gaAiReferrals.projectId, project.id),
+            sql`${gaAiReferrals.date} >= ${summary.periodStart}`,
+            sql`${gaAiReferrals.date} <= ${summary.periodEnd}`,
+          ),
+        )
+        .run()
+
+      // Sync AI referrals
+      if (aiReferrals.length > 0) {
+        for (const row of aiReferrals) {
+          tx.insert(gaAiReferrals).values({
+            id: crypto.randomUUID(),
+            projectId: project.id,
+            date: row.date,
+            source: row.source,
+            medium: row.medium,
+            sessions: row.sessions,
             users: row.users,
             syncedAt: now,
           }).run()
@@ -277,11 +305,18 @@ export async function ga4Routes(app: FastifyInstance, opts: GA4RoutesOptions) {
       }).run()
     })
 
-    gaLog('info', 'sync.complete', { projectId: project.id, rowCount: rows.length, days, totalUsers: summary.totalUsers })
+    gaLog('info', 'sync.complete', {
+      projectId: project.id,
+      rowCount: rows.length,
+      aiReferralCount: aiReferrals.length,
+      days,
+      totalUsers: summary.totalUsers,
+    })
 
     return {
       synced: true,
       rowCount: rows.length,
+      aiReferralCount: aiReferrals.length,
       days,
       syncedAt: now,
     }
@@ -332,11 +367,25 @@ export async function ga4Routes(app: FastifyInstance, opts: GA4RoutesOptions) {
       .limit(limit)
       .all()
 
+    // AI Referrals
+    const aiReferrals = app.db
+      .select({
+        source: gaAiReferrals.source,
+        medium: gaAiReferrals.medium,
+        sessions: sql<number>`SUM(${gaAiReferrals.sessions})`,
+        users: sql<number>`SUM(${gaAiReferrals.users})`,
+      })
+      .from(gaAiReferrals)
+      .where(eq(gaAiReferrals.projectId, project.id))
+      .groupBy(gaAiReferrals.source, gaAiReferrals.medium)
+      .orderBy(sql`SUM(${gaAiReferrals.sessions}) DESC`)
+      .all()
+
     const latestSync = app.db
-      .select({ syncedAt: gaTrafficSnapshots.syncedAt })
-      .from(gaTrafficSnapshots)
-      .where(eq(gaTrafficSnapshots.projectId, project.id))
-      .orderBy(desc(gaTrafficSnapshots.syncedAt))
+      .select({ syncedAt: gaTrafficSummaries.syncedAt })
+      .from(gaTrafficSummaries)
+      .where(eq(gaTrafficSummaries.projectId, project.id))
+      .orderBy(desc(gaTrafficSummaries.syncedAt))
       .limit(1)
       .get()
 
@@ -348,6 +397,12 @@ export async function ga4Routes(app: FastifyInstance, opts: GA4RoutesOptions) {
         landingPage: r.landingPage,
         sessions: r.sessions ?? 0,
         organicSessions: r.organicSessions ?? 0,
+        users: r.users ?? 0,
+      })),
+      aiReferrals: aiReferrals.map((r) => ({
+        source: r.source,
+        medium: r.medium,
+        sessions: r.sessions ?? 0,
         users: r.users ?? 0,
       })),
       lastSyncedAt: latestSync?.syncedAt ?? null,

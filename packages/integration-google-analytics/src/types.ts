@@ -10,9 +10,18 @@ export interface GA4RunReportRequest {
   dimensions: Array<{ name: string }>
   metrics: Array<{ name: string }>
   dimensionFilter?: {
-    filter?: {
+    filter: {
       fieldName: string
       stringFilter?: { matchType: string; value: string }
+    }
+  } | {
+    orGroup: {
+      expressions: Array<{
+        filter: {
+          fieldName: string
+          stringFilter: { matchType: string; value: string }
+        }
+      }>
     }
   }
   limit?: number
@@ -36,6 +45,14 @@ export interface GA4TrafficRow {
   landingPage: string
   sessions: number
   organicSessions: number
+  users: number
+}
+
+export interface GA4AiReferralRow {
+  date: string
+  source: string
+  medium: string
+  sessions: number
   users: number
 }
 

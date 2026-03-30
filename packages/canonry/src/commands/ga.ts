@@ -118,6 +118,7 @@ export async function gaSync(project: string, opts?: { days?: number; format?: s
   const result = await client.gaSync(project, { days: opts?.days }) as {
     synced: boolean
     rowCount: number
+    aiReferralCount: number
     days: number
     syncedAt: string
   }
@@ -128,7 +129,8 @@ export async function gaSync(project: string, opts?: { days?: number; format?: s
   }
 
   console.log(`GA4 sync complete for "${project}".`)
-  console.log(`  Rows synced: ${result.rowCount}`)
+  console.log(`  Page rows:   ${result.rowCount}`)
+  console.log(`  AI rows:     ${result.aiReferralCount}`)
   console.log(`  Period:      ${result.days} days`)
   console.log(`  Synced at:   ${result.syncedAt}`)
 }
@@ -143,6 +145,7 @@ export async function gaTraffic(project: string, opts?: { limit?: number; format
     totalOrganicSessions: number
     totalUsers: number
     topPages: Array<{ landingPage: string; sessions: number; organicSessions: number; users: number }>
+    aiReferrals: Array<{ source: string; medium: string; sessions: number; users: number }>
     lastSyncedAt: string | null
   }
 
@@ -151,7 +154,7 @@ export async function gaTraffic(project: string, opts?: { limit?: number; format
     return
   }
 
-  if (result.topPages.length === 0) {
+  if (result.topPages.length === 0 && result.aiReferrals.length === 0) {
     console.log('No GA4 traffic data. Run "canonry ga sync <project>" first.')
     return
   }
@@ -162,15 +165,31 @@ export async function gaTraffic(project: string, opts?: { limit?: number; format
   console.log(`  Total Users:             ${result.totalUsers}`)
   console.log()
 
-  const pageWidth = Math.min(60, Math.max(15, ...result.topPages.map((r) => r.landingPage.length)))
-  console.log(`  ${'LANDING PAGE'.padEnd(pageWidth)}  ${'SESSIONS'.padEnd(10)}${'ORGANIC'.padEnd(10)}${'USERS'.padEnd(8)}`)
-  console.log(`  ${'─'.repeat(pageWidth)}  ${'─'.repeat(10)}${'─'.repeat(10)}${'─'.repeat(8)}`)
+  if (result.aiReferrals.length > 0) {
+    console.log('  AI REFERRAL SOURCES')
+    console.log(`  ${'SOURCE'.padEnd(25)}  ${'MEDIUM'.padEnd(15)}  ${'SESSIONS'.padEnd(10)}${'USERS'.padEnd(8)}`)
+    console.log(`  ${'─'.repeat(25)}  ${'─'.repeat(15)}  ${'─'.repeat(10)}${'─'.repeat(8)}`)
 
-  for (const row of result.topPages) {
-    const page = row.landingPage.length > pageWidth ? row.landingPage.slice(0, pageWidth - 3) + '...' : row.landingPage
-    console.log(
-      `  ${page.padEnd(pageWidth)}  ${String(row.sessions).padEnd(10)}${String(row.organicSessions).padEnd(10)}${String(row.users).padEnd(8)}`,
-    )
+    for (const ref of result.aiReferrals) {
+      console.log(
+        `  ${ref.source.padEnd(25)}  ${ref.medium.padEnd(15)}  ${String(ref.sessions).padEnd(10)}${String(ref.users).padEnd(8)}`,
+      )
+    }
+    console.log()
+  }
+
+  if (result.topPages.length > 0) {
+    const pageWidth = Math.min(60, Math.max(15, ...result.topPages.map((r) => r.landingPage.length)))
+    console.log(`  TOP LANDING PAGES`)
+    console.log(`  ${'PAGE'.padEnd(pageWidth)}  ${'SESSIONS'.padEnd(10)}${'ORGANIC'.padEnd(10)}${'USERS'.padEnd(8)}`)
+    console.log(`  ${'─'.repeat(pageWidth)}  ${'─'.repeat(10)}${'─'.repeat(10)}${'─'.repeat(8)}`)
+
+    for (const row of result.topPages) {
+      const page = row.landingPage.length > pageWidth ? row.landingPage.slice(0, pageWidth - 3) + '...' : row.landingPage
+      console.log(
+        `  ${page.padEnd(pageWidth)}  ${String(row.sessions).padEnd(10)}${String(row.organicSessions).padEnd(10)}${String(row.users).padEnd(8)}`,
+      )
+    }
   }
 
   if (result.lastSyncedAt) {
