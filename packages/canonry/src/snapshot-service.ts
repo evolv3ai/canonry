@@ -812,8 +812,14 @@ function normalizeStringList(values: string[]): string[] {
   )
 }
 
-function uniqueStrings(values: string[]): string[] {
-  return [...new Set(values.map(value => value.trim()).filter(Boolean))]
+function uniqueStrings(values: string[] | unknown): string[] {
+  if (!Array.isArray(values)) return []
+  return [...new Set(
+    values
+      .filter((value): value is string => typeof value === 'string')
+      .map(value => value.trim())
+      .filter(Boolean),
+  )]
 }
 
 function normalizeDomain(value: string): string {
