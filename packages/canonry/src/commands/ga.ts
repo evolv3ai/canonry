@@ -1,3 +1,4 @@
+import type { GaConnectResponse, GaStatusResponse, GaSyncResponse, GaTrafficResponse, GaCoverageResponse } from '@ainyc/canonry-contracts'
 import { createApiClient } from '../client.js'
 import { CliError } from '../cli-error.js'
 
@@ -16,15 +17,6 @@ export async function gaConnect(project: string, opts: {
       code: 'GA_PROPERTY_ID_REQUIRED',
       message: 'Property ID is required (pass --property-id)',
       displayMessage: 'Error: --property-id is required',
-      details: { project },
-    })
-  }
-
-  if (!opts.keyFile && !opts.keyJson) {
-    throw new CliError({
-      code: 'GA_KEY_REQUIRED',
-      message: 'Service account key is required (pass --key-file or --key-json)',
-      displayMessage: 'Error: --key-file or --key-json is required',
       details: { project },
     })
   }
@@ -54,13 +46,11 @@ export async function gaConnect(project: string, opts: {
   } else if (opts.keyJson) {
     body.keyJson = opts.keyJson
   }
+  // No key provided — server will attempt to use existing OAuth token
+  // from "canonry google connect <project> --type ga4"
 
   const client = getClient()
-  const result = await client.gaConnect(project, body) as {
-    connected: boolean
-    propertyId: string
-    clientEmail: string
-  }
+  const result: GaConnectResponse = await client.gaConnect(project, body)
 
   if (opts.format === 'json') {
     console.log(JSON.stringify(result, null, 2))
@@ -68,8 +58,12 @@ export async function gaConnect(project: string, opts: {
   }
 
   console.log(`GA4 connected for project "${project}".`)
-  console.log(`  Property ID:     ${result.propertyId}`)
-  console.log(`  Service Account: ${result.clientEmail}`)
+  console.log(`  Property ID:  ${result.propertyId}`)
+  if (result.authMethod === 'service-account' && result.clientEmail) {
+    console.log(`  Auth:         service account (${result.clientEmail})`)
+  } else {
+    console.log(`  Auth:         OAuth (canonry google connect --type ga4)`)
+  }
 }
 
 export async function gaDisconnect(project: string, format?: string): Promise<void> {
@@ -86,14 +80,7 @@ export async function gaDisconnect(project: string, format?: string): Promise<vo
 
 export async function gaStatus(project: string, format?: string): Promise<void> {
   const client = getClient()
-  const result = await client.gaStatus(project) as {
-    connected: boolean
-    propertyId: string | null
-    clientEmail: string | null
-    lastSyncedAt: string | null
-    createdAt?: string
-    updatedAt?: string
-  }
+  const result: GaStatusResponse = await client.gaStatus(project)
 
   if (format === 'json') {
     console.log(JSON.stringify(result, null, 2))
@@ -102,26 +89,27 @@ export async function gaStatus(project: string, format?: string): Promise<void> 
 
   if (!result.connected) {
     console.log(`No GA4 connection for project "${project}".`)
-    console.log('Run "canonry ga connect <project> --property-id <id> --key-file <path>" to connect.')
+    console.log('Options:')
+    console.log('  With service account: canonry ga connect <project> --property-id <id> --key-file <path>')
+    console.log('  With OAuth:           canonry google connect <project> --type ga4')
+    console.log('                        canonry ga connect <project> --property-id <id>')
     return
   }
 
   console.log(`GA4 for "${project}":\n`)
-  console.log(`  Property ID:     ${result.propertyId}`)
-  console.log(`  Service Account: ${result.clientEmail}`)
-  console.log(`  Last Synced:     ${result.lastSyncedAt ?? '(never)'}`)
-  console.log(`  Connected:       ${result.createdAt ?? 'unknown'}`)
+  console.log(`  Property ID:  ${result.propertyId}`)
+  if (result.authMethod === 'service-account') {
+    console.log(`  Auth:         service account (${result.clientEmail})`)
+  } else {
+    console.log(`  Auth:         OAuth`)
+  }
+  console.log(`  Last Synced:  ${result.lastSyncedAt ?? '(never)'}`)
+  console.log(`  Connected:    ${result.createdAt ?? 'unknown'}`)
 }
 
 export async function gaSync(project: string, opts?: { days?: number; format?: string }): Promise<void> {
   const client = getClient()
-  const result = await client.gaSync(project, { days: opts?.days }) as {
-    synced: boolean
-    rowCount: number
-    aiReferralCount: number
-    days: number
-    syncedAt: string
-  }
+  const result: GaSyncResponse = await client.gaSync(project, { days: opts?.days })
 
   if (opts?.format === 'json') {
     console.log(JSON.stringify(result, null, 2))
@@ -140,14 +128,7 @@ export async function gaTraffic(project: string, opts?: { limit?: number; format
   const params: Record<string, string> = {}
   if (opts?.limit) params.limit = String(opts.limit)
 
-  const result = await client.gaTraffic(project, Object.keys(params).length > 0 ? params : undefined) as {
-    totalSessions: number
-    totalOrganicSessions: number
-    totalUsers: number
-    topPages: Array<{ landingPage: string; sessions: number; organicSessions: number; users: number }>
-    aiReferrals: Array<{ source: string; medium: string; sessions: number; users: number }>
-    lastSyncedAt: string | null
-  }
+  const result: GaTrafficResponse = await client.gaTraffic(project, Object.keys(params).length > 0 ? params : undefined)
 
   if (opts?.format === 'json') {
     console.log(JSON.stringify(result, null, 2))
@@ -199,9 +180,7 @@ export async function gaTraffic(project: string, opts?: { limit?: number; format
 
 export async function gaCoverage(project: string, format?: string): Promise<void> {
   const client = getClient()
-  const result = await client.gaCoverage(project) as {
-    pages: Array<{ landingPage: string; sessions: number; organicSessions: number; users: number }>
-  }
+  const result: GaCoverageResponse = await client.gaCoverage(project)
 
   if (format === 'json') {
     console.log(JSON.stringify(result, null, 2))
