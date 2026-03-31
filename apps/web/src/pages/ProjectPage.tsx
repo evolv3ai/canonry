@@ -1138,6 +1138,9 @@ export function ProjectPage({
           runId: r.runId,
           citationState: r.citationState,
           createdAt: r.createdAt,
+          answerMentioned: r.answerMentioned,
+          visibilityState: r.visibilityState as RunHistoryPoint['visibilityState'] | undefined,
+          visibilityTransition: r.visibilityTransition,
         })))
       }
       // Fallback: keyword-level history when no per-provider data
@@ -1146,6 +1149,9 @@ export function ProjectPage({
           runId: r.runId,
           citationState: r.citationState,
           createdAt: r.createdAt,
+          answerMentioned: r.answerMentioned,
+          visibilityState: r.visibilityState as RunHistoryPoint['visibilityState'] | undefined,
+          visibilityTransition: r.visibilityTransition,
         })))
       }
     }

@@ -2,7 +2,7 @@ import { eq, desc, inArray } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
 import { auditLog, querySnapshots, runs, keywords, parseJsonColumn } from '@ainyc/canonry-db'
 import { validationError } from '@ainyc/canonry-contracts'
-import { resolveProject } from './helpers.js'
+import { resolveProject, resolveSnapshotAnswerMentioned, resolveSnapshotVisibilityState } from './helpers.js'
 import { redactNotificationDiff } from './notification-redaction.js'
 
 export async function historyRoutes(app: FastifyInstance) {
@@ -62,6 +62,7 @@ export async function historyRoutes(app: FastifyInstance) {
         provider: querySnapshots.provider,
         model: querySnapshots.model,
         citationState: querySnapshots.citationState,
+        answerMentioned: querySnapshots.answerMentioned,
         answerText: querySnapshots.answerText,
         citedDomains: querySnapshots.citedDomains,
         competitorOverlap: querySnapshots.competitorOverlap,
@@ -93,6 +94,8 @@ export async function historyRoutes(app: FastifyInstance) {
         provider: s.provider,
         model: s.model,
         citationState: s.citationState,
+        answerMentioned: resolveSnapshotAnswerMentioned(s, project),
+        visibilityState: resolveSnapshotVisibilityState(s, project),
         answerText: s.answerText,
         citedDomains: parseJsonColumn<string[]>(s.citedDomains, []),
         competitorOverlap: parseJsonColumn<string[]>(s.competitorOverlap, []),
@@ -138,9 +141,13 @@ export async function historyRoutes(app: FastifyInstance) {
 
     // Filter by location if requested
     const timelineLocationFilter = request.query.location
-    const allSnapshots = timelineLocationFilter !== undefined
+    const filteredSnapshots = timelineLocationFilter !== undefined
       ? rawSnapshots.filter(s => s.location === (timelineLocationFilter || null))
       : rawSnapshots
+    const allSnapshots = filteredSnapshots.map(snapshot => ({
+      ...snapshot,
+      answerMentioned: resolveSnapshotAnswerMentioned(snapshot, project),
+    }))
 
     // Deduplicate to one entry per (runId, keywordId) before building transitions so that
     // multi-provider runs don't produce spurious transition events within a single run.
@@ -149,7 +156,11 @@ export async function historyRoutes(app: FastifyInstance) {
     for (const snap of allSnapshots) {
       const key = `${snap.runId}:${snap.keywordId}`
       const existing = deduped.get(key)
-      if (!existing || snap.citationState === 'cited') {
+      if (
+        !existing ||
+        (!existing.answerMentioned && snap.answerMentioned) ||
+        (existing.answerMentioned === snap.answerMentioned && snap.citationState === 'cited')
+      ) {
         deduped.set(key, snap)
       }
     }
@@ -177,15 +188,23 @@ export async function historyRoutes(app: FastifyInstance) {
       return snaps.map((snap, idx) => {
         const run = projectRuns.find(r => r.id === snap.runId)
         let transition: string = snap.citationState === 'cited' ? 'cited' : 'not-cited'
+        let visibilityTransition: string = snap.answerMentioned ? 'visible' : 'not-visible'
 
         if (idx === 0) {
           transition = 'new'
+          visibilityTransition = 'new'
         } else {
           const prev = snaps[idx - 1]!
           if (prev.citationState === 'not-cited' && snap.citationState === 'cited') {
             transition = 'emerging'
           } else if (prev.citationState === 'cited' && snap.citationState === 'not-cited') {
             transition = 'lost'
+          }
+
+          if (!prev.answerMentioned && snap.answerMentioned) {
+            visibilityTransition = 'emerging'
+          } else if (prev.answerMentioned && !snap.answerMentioned) {
+            visibilityTransition = 'lost'
           }
         }
 
@@ -194,6 +213,9 @@ export async function historyRoutes(app: FastifyInstance) {
           createdAt: run?.createdAt ?? snap.createdAt,
           citationState: snap.citationState,
           transition,
+          answerMentioned: snap.answerMentioned,
+          visibilityState: snap.answerMentioned ? 'visible' : 'not-visible',
+          visibilityTransition,
         }
       })
     }
@@ -242,7 +264,7 @@ export async function historyRoutes(app: FastifyInstance) {
     Params: { name: string }
     Querystring: { run1: string; run2: string }
   }>('/projects/:name/snapshots/diff', async (request, reply) => {
-    resolveProject(app.db, request.params.name) // validate project exists
+    const project = resolveProject(app.db, request.params.name)
 
     const { run1, run2 } = request.query
     if (!run1 || !run2) {
@@ -255,6 +277,8 @@ export async function historyRoutes(app: FastifyInstance) {
         keywordId: querySnapshots.keywordId,
         keyword: keywords.keyword,
         citationState: querySnapshots.citationState,
+        answerMentioned: querySnapshots.answerMentioned,
+        answerText: querySnapshots.answerText,
       })
       .from(querySnapshots)
       .leftJoin(keywords, eq(querySnapshots.keywordId, keywords.id))
@@ -266,6 +290,8 @@ export async function historyRoutes(app: FastifyInstance) {
         keywordId: querySnapshots.keywordId,
         keyword: keywords.keyword,
         citationState: querySnapshots.citationState,
+        answerMentioned: querySnapshots.answerMentioned,
+        answerText: querySnapshots.answerText,
       })
       .from(querySnapshots)
       .leftJoin(keywords, eq(querySnapshots.keywordId, keywords.id))
@@ -274,15 +300,43 @@ export async function historyRoutes(app: FastifyInstance) {
 
     // Build lookup by keyword id — prefer 'cited' when multiple providers gave different
     // states for the same keyword within a run (same logic as the timeline deduplication)
-    const map1 = new Map<string | null, typeof snaps1[number]>()
+    const map1 = new Map<string | null, (typeof snaps1[number]) & {
+      resolvedAnswerMentioned: boolean
+      resolvedVisibilityState: ReturnType<typeof resolveSnapshotVisibilityState>
+    }>()
     for (const s of snaps1) {
+      const resolved = {
+        ...s,
+        resolvedAnswerMentioned: resolveSnapshotAnswerMentioned(s, project),
+        resolvedVisibilityState: resolveSnapshotVisibilityState(s, project),
+      }
       const existing = map1.get(s.keywordId)
-      if (!existing || s.citationState === 'cited') map1.set(s.keywordId, s)
+      if (
+        !existing ||
+        (!existing.resolvedAnswerMentioned && resolved.resolvedAnswerMentioned) ||
+        (existing.resolvedAnswerMentioned === resolved.resolvedAnswerMentioned && resolved.citationState === 'cited')
+      ) {
+        map1.set(s.keywordId, resolved)
+      }
     }
-    const map2 = new Map<string | null, typeof snaps2[number]>()
+    const map2 = new Map<string | null, (typeof snaps2[number]) & {
+      resolvedAnswerMentioned: boolean
+      resolvedVisibilityState: ReturnType<typeof resolveSnapshotVisibilityState>
+    }>()
     for (const s of snaps2) {
+      const resolved = {
+        ...s,
+        resolvedAnswerMentioned: resolveSnapshotAnswerMentioned(s, project),
+        resolvedVisibilityState: resolveSnapshotVisibilityState(s, project),
+      }
       const existing = map2.get(s.keywordId)
-      if (!existing || s.citationState === 'cited') map2.set(s.keywordId, s)
+      if (
+        !existing ||
+        (!existing.resolvedAnswerMentioned && resolved.resolvedAnswerMentioned) ||
+        (existing.resolvedAnswerMentioned === resolved.resolvedAnswerMentioned && resolved.citationState === 'cited')
+      ) {
+        map2.set(s.keywordId, resolved)
+      }
     }
 
     // Compute diff for all keywords present in either run
@@ -295,7 +349,12 @@ export async function historyRoutes(app: FastifyInstance) {
         keyword: s2?.keyword ?? s1?.keyword ?? null,
         run1State: s1?.citationState ?? null,
         run2State: s2?.citationState ?? null,
+        run1AnswerMentioned: s1?.resolvedAnswerMentioned ?? null,
+        run2AnswerMentioned: s2?.resolvedAnswerMentioned ?? null,
+        run1VisibilityState: s1?.resolvedVisibilityState ?? null,
+        run2VisibilityState: s2?.resolvedVisibilityState ?? null,
         changed: (s1?.citationState ?? null) !== (s2?.citationState ?? null),
+        visibilityChanged: (s1?.resolvedAnswerMentioned ?? null) !== (s2?.resolvedAnswerMentioned ?? null),
       }
     })
 

@@ -62,6 +62,7 @@ export const querySnapshots = sqliteTable('query_snapshots', {
   provider: text('provider').notNull().default('gemini'),
   model: text('model'),
   citationState: text('citation_state').notNull(),
+  answerMentioned: integer('answer_mentioned', { mode: 'boolean' }),
   answerText: text('answer_text'),
   citedDomains: text('cited_domains').notNull().default('[]'),
   competitorOverlap: text('competitor_overlap').notNull().default('[]'),

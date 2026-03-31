@@ -313,6 +313,8 @@ const MIGRATIONS = [
   `CREATE INDEX IF NOT EXISTS idx_ga_ai_ref_project_date ON ga_ai_referrals(project_id, date)`,
   `CREATE INDEX IF NOT EXISTS idx_ga_ai_ref_source ON ga_ai_referrals(source)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_ga_ai_ref_unique ON ga_ai_referrals(project_id, date, source, medium)`,
+  // v18: Answer-level visibility derived from answer text
+  `ALTER TABLE query_snapshots ADD COLUMN answer_mentioned INTEGER`,
 ]
 
 export function migrate(db: DatabaseClient) {

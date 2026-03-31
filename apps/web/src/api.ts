@@ -147,6 +147,8 @@ export interface ApiSnapshot {
   keyword: string | null
   provider: string
   citationState: string
+  answerMentioned?: boolean
+  visibilityState?: string
   answerText: string | null
   citedDomains: string[]
   competitorOverlap: string[]
@@ -181,18 +183,27 @@ export interface ApiTimelineEntry {
     createdAt: string
     citationState: string
     transition: string
+    answerMentioned?: boolean
+    visibilityState?: string
+    visibilityTransition?: string
   }[]
   providerRuns?: Record<string, {
     runId: string
     createdAt: string
     citationState: string
     transition: string
+    answerMentioned?: boolean
+    visibilityState?: string
+    visibilityTransition?: string
   }[]>
   modelRuns?: Record<string, {
     runId: string
     createdAt: string
     citationState: string
     transition: string
+    answerMentioned?: boolean
+    visibilityState?: string
+    visibilityTransition?: string
   }[]>
 }
 

@@ -1,8 +1,14 @@
 import crypto from 'node:crypto'
 import { eq, sql } from 'drizzle-orm'
 import type { DatabaseClient } from '@ainyc/canonry-db'
-import { projects, auditLog, usageCounters } from '@ainyc/canonry-db'
-import { notFound } from '@ainyc/canonry-contracts'
+import { projects, auditLog, usageCounters, parseJsonColumn } from '@ainyc/canonry-db'
+import {
+  determineAnswerMentioned,
+  effectiveDomains,
+  notFound,
+  visibilityStateFromAnswerMentioned,
+  type VisibilityState,
+} from '@ainyc/canonry-contracts'
 
 export function resolveProject(db: DatabaseClient, name: string) {
   const project = db.select().from(projects).where(eq(projects.name, name)).get()
@@ -54,4 +60,37 @@ export function incrementUsage(db: DatabaseClient, scope: string, metric: string
       updatedAt: now.toISOString(),
     },
   }).run()
+}
+
+export interface SnapshotVisibilityProject {
+  displayName: string
+  canonicalDomain: string
+  ownedDomains?: string | string[] | null
+}
+
+export function resolveSnapshotAnswerMentioned(
+  snapshot: { answerMentioned?: boolean | null; answerText?: string | null },
+  project: SnapshotVisibilityProject,
+): boolean {
+  if (typeof snapshot.answerMentioned === 'boolean') {
+    return snapshot.answerMentioned
+  }
+
+  return determineAnswerMentioned(snapshot.answerText, project.displayName, effectiveDomains({
+    canonicalDomain: project.canonicalDomain,
+    ownedDomains: normalizeOwnedDomains(project.ownedDomains),
+  }))
+}
+
+export function resolveSnapshotVisibilityState(
+  snapshot: { answerMentioned?: boolean | null; answerText?: string | null },
+  project: SnapshotVisibilityProject,
+): VisibilityState {
+  return visibilityStateFromAnswerMentioned(resolveSnapshotAnswerMentioned(snapshot, project))
+}
+
+function normalizeOwnedDomains(value: string | string[] | null | undefined): string[] {
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string')
+  const parsed = parseJsonColumn<unknown[]>(typeof value === 'string' ? value : null, [])
+  return parsed.filter((item): item is string => typeof item === 'string')
 }

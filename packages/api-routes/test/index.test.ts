@@ -300,16 +300,245 @@ describe('api-routes', () => {
     const runRes = await app.inject({ method: 'GET', url: `/api/v1/runs/${runId}` })
     expect(runRes.statusCode).toBe(200)
     const runBody = JSON.parse(runRes.payload) as {
-      snapshots: Array<{ recommendedCompetitors: string[] }>
+      snapshots: Array<{
+        recommendedCompetitors: string[]
+        answerMentioned?: boolean
+        visibilityState?: string
+      }>
     }
     expect(runBody.snapshots[0]?.recommendedCompetitors).toEqual(['Downtown Smiles'])
+    expect(runBody.snapshots[0]?.answerMentioned).toBe(false)
+    expect(runBody.snapshots[0]?.visibilityState).toBe('not-visible')
 
     const historyRes = await app.inject({ method: 'GET', url: '/api/v1/projects/snapshot-history-project/snapshots' })
     expect(historyRes.statusCode).toBe(200)
     const historyBody = JSON.parse(historyRes.payload) as {
-      snapshots: Array<{ recommendedCompetitors: string[] }>
+      snapshots: Array<{
+        recommendedCompetitors: string[]
+        answerMentioned?: boolean
+        visibilityState?: string
+      }>
     }
     expect(historyBody.snapshots[0]?.recommendedCompetitors).toEqual(['Downtown Smiles'])
+    expect(historyBody.snapshots[0]?.answerMentioned).toBe(false)
+    expect(historyBody.snapshots[0]?.visibilityState).toBe('not-visible')
+  })
+
+  it('project timeline exposes answer visibility states and transitions', async () => {
+    const projectId = crypto.randomUUID()
+    const keywordId = crypto.randomUUID()
+    const run1Id = crypto.randomUUID()
+    const run2Id = crypto.randomUUID()
+    const run1At = new Date(Date.now() + 40_000).toISOString()
+    const run2At = new Date(Date.now() + 50_000).toISOString()
+
+    db.insert(projects).values({
+      id: projectId,
+      name: 'timeline-visibility-project',
+      displayName: 'Timeline Visibility Project',
+      canonicalDomain: 'example.com',
+      country: 'US',
+      language: 'en',
+      providers: '[]',
+      createdAt: run1At,
+      updatedAt: run1At,
+    }).run()
+
+    db.insert(keywords).values({
+      id: keywordId,
+      projectId,
+      keyword: 'best example tooling',
+      createdAt: run1At,
+    }).run()
+
+    db.insert(runs).values([
+      {
+        id: run1Id,
+        projectId,
+        status: 'completed',
+        createdAt: run1At,
+        finishedAt: run1At,
+      },
+      {
+        id: run2Id,
+        projectId,
+        status: 'completed',
+        createdAt: run2At,
+        finishedAt: run2At,
+      },
+    ]).run()
+
+    db.insert(querySnapshots).values([
+      {
+        id: crypto.randomUUID(),
+        runId: run1Id,
+        keywordId,
+        provider: 'gemini',
+        citationState: 'not-cited',
+        answerMentioned: false,
+        answerText: 'Here are several vendors to consider.',
+        citedDomains: '[]',
+        competitorOverlap: '[]',
+        recommendedCompetitors: '[]',
+        rawResponse: '{"groundingSources":[],"searchQueries":[]}',
+        createdAt: run1At,
+      },
+      {
+        id: crypto.randomUUID(),
+        runId: run2Id,
+        keywordId,
+        provider: 'gemini',
+        citationState: 'not-cited',
+        answerMentioned: true,
+        answerText: 'Example.com is one of the vendors to consider.',
+        citedDomains: '["example.com"]',
+        competitorOverlap: '[]',
+        recommendedCompetitors: '[]',
+        rawResponse: '{"groundingSources":[],"searchQueries":[]}',
+        createdAt: run2At,
+      },
+    ]).run()
+
+    const res = await app.inject({ method: 'GET', url: '/api/v1/projects/timeline-visibility-project/timeline' })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload) as Array<{
+      runs: Array<{
+        answerMentioned?: boolean
+        visibilityState?: string
+        visibilityTransition?: string
+      }>
+      providerRuns?: Record<string, Array<{
+        answerMentioned?: boolean
+        visibilityState?: string
+        visibilityTransition?: string
+      }>>
+    }>
+
+    expect(body[0]?.runs).toEqual([
+      expect.objectContaining({
+        answerMentioned: false,
+        visibilityState: 'not-visible',
+        visibilityTransition: 'new',
+      }),
+      expect.objectContaining({
+        answerMentioned: true,
+        visibilityState: 'visible',
+        visibilityTransition: 'emerging',
+      }),
+    ])
+    expect(body[0]?.providerRuns?.gemini?.[1]).toEqual(expect.objectContaining({
+      answerMentioned: true,
+      visibilityState: 'visible',
+      visibilityTransition: 'emerging',
+    }))
+  })
+
+  it('GET /api/v1/projects/:name/snapshots/diff includes visibility comparison fields', async () => {
+    const projectId = crypto.randomUUID()
+    const keywordId = crypto.randomUUID()
+    const run1Id = crypto.randomUUID()
+    const run2Id = crypto.randomUUID()
+    const run1At = new Date('2025-02-01T10:00:00.000Z').toISOString()
+    const run2At = new Date('2025-02-02T10:00:00.000Z').toISOString()
+
+    db.insert(projects).values({
+      id: projectId,
+      name: 'diff-visibility-project',
+      displayName: 'Example',
+      canonicalDomain: 'example.com',
+      ownedDomains: '[]',
+      country: 'US',
+      language: 'en',
+      providers: '[]',
+      createdAt: run1At,
+      updatedAt: run1At,
+    }).run()
+
+    db.insert(keywords).values({
+      id: keywordId,
+      projectId,
+      keyword: 'best example tooling',
+      createdAt: run1At,
+    }).run()
+
+    db.insert(runs).values([
+      {
+        id: run1Id,
+        projectId,
+        status: 'completed',
+        createdAt: run1At,
+        finishedAt: run1At,
+      },
+      {
+        id: run2Id,
+        projectId,
+        status: 'completed',
+        createdAt: run2At,
+        finishedAt: run2At,
+      },
+    ]).run()
+
+    db.insert(querySnapshots).values([
+      {
+        id: crypto.randomUUID(),
+        runId: run1Id,
+        keywordId,
+        provider: 'gemini',
+        citationState: 'not-cited',
+        answerMentioned: false,
+        answerText: 'Here are several vendors to consider.',
+        citedDomains: '[]',
+        competitorOverlap: '[]',
+        recommendedCompetitors: '[]',
+        rawResponse: '{"groundingSources":[],"searchQueries":[]}',
+        createdAt: run1At,
+      },
+      {
+        id: crypto.randomUUID(),
+        runId: run2Id,
+        keywordId,
+        provider: 'gemini',
+        citationState: 'not-cited',
+        answerMentioned: true,
+        answerText: 'Example.com is one of the vendors to consider.',
+        citedDomains: '[]',
+        competitorOverlap: '[]',
+        recommendedCompetitors: '[]',
+        rawResponse: '{"groundingSources":[],"searchQueries":[]}',
+        createdAt: run2At,
+      },
+    ]).run()
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/projects/diff-visibility-project/snapshots/diff?run1=${run1Id}&run2=${run2Id}`,
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload) as {
+      diff: Array<{
+        run1State: string | null
+        run2State: string | null
+        run1AnswerMentioned: boolean | null
+        run2AnswerMentioned: boolean | null
+        run1VisibilityState: string | null
+        run2VisibilityState: string | null
+        changed: boolean
+        visibilityChanged: boolean
+      }>
+    }
+
+    expect(body.diff).toEqual([
+      expect.objectContaining({
+        run1State: 'not-cited',
+        run2State: 'not-cited',
+        run1AnswerMentioned: false,
+        run2AnswerMentioned: true,
+        run1VisibilityState: 'not-visible',
+        run2VisibilityState: 'visible',
+        changed: false,
+        visibilityChanged: true,
+      }),
+    ])
   })
 
   it('PUT /api/v1/projects/:name updates project settings', async () => {
