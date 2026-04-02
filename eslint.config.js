@@ -2,6 +2,24 @@ import js from '@eslint/js'
 import globals from 'globals'
 import tseslint from 'typescript-eslint'
 
+const ALT_CHART_LIB_PATHS = [
+  { name: 'chart.js', message: 'Use Recharts via ChartPrimitives instead.' },
+  { name: 'highcharts', message: 'Use Recharts via ChartPrimitives instead.' },
+  { name: 'd3', message: 'Use Recharts via ChartPrimitives instead.' },
+  { name: 'victory', message: 'Use Recharts via ChartPrimitives instead.' },
+  { name: '@nivo/core', message: 'Use Recharts via ChartPrimitives instead.' },
+  { name: 'plotly.js', message: 'Use Recharts via ChartPrimitives instead.' },
+]
+
+const ALT_CHART_LIB_PATTERNS = [
+  { group: ['chart.js/*'], message: 'Use Recharts via ChartPrimitives instead.' },
+  { group: ['highcharts/*'], message: 'Use Recharts via ChartPrimitives instead.' },
+  { group: ['d3-*'], message: 'Use Recharts via ChartPrimitives instead.' },
+  { group: ['victory-*'], message: 'Use Recharts via ChartPrimitives instead.' },
+  { group: ['@nivo/*'], message: 'Use Recharts via ChartPrimitives instead.' },
+  { group: ['plotly.js-*'], message: 'Use Recharts via ChartPrimitives instead.' },
+]
+
 export default tseslint.config(
   {
     ignores: ['dist/', 'node_modules/', 'apps/**/dist/', 'packages/**/dist/'],
@@ -32,11 +50,41 @@ export default tseslint.config(
     },
   },
   {
+    // ChartPrimitives is the only file allowed to import directly from recharts.
+    // All other web files must use ChartPrimitives and may not use alternative chart libs.
     files: ['apps/web/**/*.ts', 'apps/web/**/*.tsx'],
+    ignores: ['apps/web/src/components/shared/ChartPrimitives.tsx'],
     languageOptions: {
       globals: {
         ...globals.browser,
       },
+    },
+    rules: {
+      'no-restricted-imports': ['error', {
+        paths: [
+          ...ALT_CHART_LIB_PATHS,
+          { name: 'recharts', message: 'Import from ChartPrimitives.js instead of recharts directly.' },
+        ],
+        patterns: [
+          ...ALT_CHART_LIB_PATTERNS,
+          { group: ['recharts/*'], message: 'Import from ChartPrimitives.js instead of recharts directly.' },
+        ],
+      }],
+    },
+  },
+  {
+    // ChartPrimitives itself can import recharts but not alternative chart libs
+    files: ['apps/web/src/components/shared/ChartPrimitives.tsx'],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+      },
+    },
+    rules: {
+      'no-restricted-imports': ['error', {
+        paths: ALT_CHART_LIB_PATHS,
+        patterns: ALT_CHART_LIB_PATTERNS,
+      }],
     },
   },
 )

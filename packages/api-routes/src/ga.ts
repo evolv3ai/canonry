@@ -396,6 +396,7 @@ export async function ga4Routes(app: FastifyInstance, opts: GA4RoutesOptions) {
             date: row.date,
             source: row.source,
             medium: row.medium,
+            sourceDimension: row.sourceDimension,
             sessions: row.sessions,
             users: row.users,
             syncedAt: now,
@@ -475,14 +476,35 @@ export async function ga4Routes(app: FastifyInstance, opts: GA4RoutesOptions) {
       .select({
         source: gaAiReferrals.source,
         medium: gaAiReferrals.medium,
+        sourceDimension: gaAiReferrals.sourceDimension,
         sessions: sql<number>`SUM(${gaAiReferrals.sessions})`,
         users: sql<number>`SUM(${gaAiReferrals.users})`,
       })
       .from(gaAiReferrals)
       .where(eq(gaAiReferrals.projectId, project.id))
-      .groupBy(gaAiReferrals.source, gaAiReferrals.medium)
+      .groupBy(gaAiReferrals.source, gaAiReferrals.medium, gaAiReferrals.sourceDimension)
       .orderBy(sql`SUM(${gaAiReferrals.sessions}) DESC`)
       .all()
+
+    // Deduplicated AI totals: sessionSource, firstUserSource, and manualSource are
+    // overlapping attribution lenses, not disjoint visits. To avoid double-counting,
+    // take MAX(sessions) per date+source+medium across dimensions, then sum.
+    const aiDeduped = app.db
+      .select({
+        sessions: sql<number>`SUM(max_sessions)`,
+        users: sql<number>`SUM(max_users)`,
+      })
+      .from(
+        sql`(
+          SELECT date, source, medium,
+                 MAX(sessions) AS max_sessions,
+                 MAX(users) AS max_users
+          FROM ga_ai_referrals
+          WHERE project_id = ${project.id}
+          GROUP BY date, source, medium
+        )`
+      )
+      .get()
 
     const latestSync = app.db
       .select({ syncedAt: gaTrafficSummaries.syncedAt })
@@ -505,9 +527,12 @@ export async function ga4Routes(app: FastifyInstance, opts: GA4RoutesOptions) {
       aiReferrals: aiReferrals.map((r) => ({
         source: r.source,
         medium: r.medium,
+        sourceDimension: r.sourceDimension,
         sessions: r.sessions ?? 0,
         users: r.users ?? 0,
       })),
+      aiSessionsDeduped: aiDeduped?.sessions ?? 0,
+      aiUsersDeduped: aiDeduped?.users ?? 0,
       lastSyncedAt: latestSync?.syncedAt ?? null,
     }
   })
@@ -524,6 +549,7 @@ export async function ga4Routes(app: FastifyInstance, opts: GA4RoutesOptions) {
         date: gaAiReferrals.date,
         source: gaAiReferrals.source,
         medium: gaAiReferrals.medium,
+        sourceDimension: gaAiReferrals.sourceDimension,
         sessions: gaAiReferrals.sessions,
         users: gaAiReferrals.users,
       })

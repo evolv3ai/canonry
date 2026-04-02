@@ -238,7 +238,7 @@ describe('GA4 routes', () => {
       totalUsers: 55,
     })
     const fetchAiReferralsSpy = vi.spyOn(gaModule, 'fetchAiReferrals').mockResolvedValue([
-      { date: '2026-03-20', source: 'chatgpt.com', medium: 'referral', sessions: 12, users: 9 },
+      { date: '2026-03-20', source: 'chatgpt.com', medium: 'referral', sessions: 12, users: 9, sourceDimension: 'session' },
     ])
 
     const res = await app.inject({
@@ -445,8 +445,10 @@ describe('GA4 routes', () => {
     expect(body.topPages[0].sessions).toBe(300)
     expect(body.topPages[1].landingPage).toBe('/page-b')
     expect(body.aiReferrals).toEqual([
-      { source: 'chatgpt.com', medium: 'referral', sessions: 17, users: 10 },
+      { source: 'chatgpt.com', medium: 'referral', sourceDimension: 'session', sessions: 17, users: 10 },
     ])
+    expect(body.aiSessionsDeduped).toBe(17)
+    expect(body.aiUsersDeduped).toBe(10)
     expect(body.lastSyncedAt).toBe(now)
 
     credentials.delete('test-project')
