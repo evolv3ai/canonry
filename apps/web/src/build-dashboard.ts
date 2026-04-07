@@ -954,7 +954,7 @@ export function buildProjectCommandCenter(data: ProjectData): ProjectCommandCent
 
   // Surface stale-visibility warning when integration syncs are more recent than the latest visibility run
   const sortedRuns = [...data.runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-  latestVisibilityRun = sortedRuns.find(r => r.kind === RunKinds.answerVisibility)
+  const latestVisibilityRunStale = sortedRuns.find(r => r.kind === RunKinds.answerVisibility)
   const latestSyncRun = sortedRuns.find(r => r.kind !== RunKinds.answerVisibility)
   if (latestVisibilityRunStale && latestSyncRun) {
     const visibilityAge = new Date(latestSyncRun.createdAt).getTime() - new Date(latestVisibilityRunStale.createdAt).getTime()
