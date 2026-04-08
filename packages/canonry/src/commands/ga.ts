@@ -1,4 +1,4 @@
-import type { GaConnectResponse, GaStatusResponse, GaSyncResponse, GaTrafficResponse, GaCoverageResponse, GA4AiReferralHistoryEntry } from '@ainyc/canonry-contracts'
+import type { GaConnectResponse, GaStatusResponse, GaSyncResponse, GaTrafficResponse, GaCoverageResponse, GaSocialReferralTrendResponse, GaAttributionTrendResponse, GA4AiReferralHistoryEntry, GA4SocialReferralHistoryEntry } from '@ainyc/canonry-contracts'
 import { createApiClient } from '../client.js'
 import { CliError } from '../cli-error.js'
 
@@ -107,9 +107,12 @@ export async function gaStatus(project: string, format?: string): Promise<void> 
   console.log(`  Connected:    ${result.createdAt ?? 'unknown'}`)
 }
 
-export async function gaSync(project: string, opts?: { days?: number; format?: string }): Promise<void> {
+export async function gaSync(project: string, opts?: { days?: number; only?: string; format?: string }): Promise<void> {
   const client = getClient()
-  const result: GaSyncResponse = await client.gaSync(project, { days: opts?.days })
+  const body: { days?: number; only?: string } = {}
+  if (opts?.days) body.days = opts.days
+  if (opts?.only) body.only = opts.only
+  const result: GaSyncResponse = await client.gaSync(project, body)
 
   if (opts?.format === 'json') {
     console.log(JSON.stringify(result, null, 2))
@@ -117,8 +120,12 @@ export async function gaSync(project: string, opts?: { days?: number; format?: s
   }
 
   console.log(`GA4 sync complete for "${project}".`)
+  if (result.syncedComponents) {
+    console.log(`  Components:  ${result.syncedComponents.join(', ')}`)
+  }
   console.log(`  Page rows:   ${result.rowCount}`)
   console.log(`  AI rows:     ${result.aiReferralCount}`)
+  console.log(`  Social rows: ${result.socialReferralCount}`)
   console.log(`  Period:      ${result.days} days`)
   console.log(`  Synced at:   ${result.syncedAt}`)
 }
@@ -135,7 +142,7 @@ export async function gaTraffic(project: string, opts?: { limit?: number; format
     return
   }
 
-  if (result.topPages.length === 0 && result.aiReferrals.length === 0) {
+  if (result.topPages.length === 0 && result.aiReferrals.length === 0 && result.socialReferrals.length === 0) {
     console.log('No GA4 traffic data. Run "canonry ga sync <project>" first.')
     return
   }
@@ -160,6 +167,25 @@ export async function gaTraffic(project: string, opts?: { limit?: number; format
       const dimLabel = ref.sourceDimension === 'first_user' ? 'first-visit' : ref.sourceDimension === 'manual_utm' ? 'utm' : 'session'
       console.log(
         `  ${ref.source.padEnd(25)}  ${ref.medium.padEnd(15)}  ${dimLabel.padEnd(attrWidth)}  ${String(ref.sessions).padEnd(10)}${String(ref.users).padEnd(8)}`,
+      )
+    }
+    console.log()
+  }
+
+  if (result.socialReferrals.length > 0) {
+    const chanWidth = 12
+    if (result.socialSessions > 0) {
+      const share = result.totalSessions > 0 ? Math.round((result.socialSessions / result.totalSessions) * 100) : 0
+      console.log(`  Social Sessions:         ${result.socialSessions} (${share}% of total)`)
+    }
+    console.log('  SOCIAL REFERRAL SOURCES')
+    console.log(`  ${'SOURCE'.padEnd(25)}  ${'MEDIUM'.padEnd(15)}  ${'CHANNEL'.padEnd(chanWidth)}  ${'SESSIONS'.padEnd(10)}${'USERS'.padEnd(8)}`)
+    console.log(`  ${'─'.repeat(25)}  ${'─'.repeat(15)}  ${'─'.repeat(chanWidth)}  ${'─'.repeat(10)}${'─'.repeat(8)}`)
+
+    for (const ref of result.socialReferrals) {
+      const chanLabel = ref.channelGroup === 'Paid Social' ? 'paid' : 'organic'
+      console.log(
+        `  ${ref.source.padEnd(25)}  ${ref.medium.padEnd(15)}  ${chanLabel.padEnd(chanWidth)}  ${String(ref.sessions).padEnd(10)}${String(ref.users).padEnd(8)}`,
       )
     }
     console.log()
@@ -212,6 +238,34 @@ export async function gaAiReferralHistory(project: string, format?: string): Pro
   }
 }
 
+export async function gaSocialReferralHistory(project: string, format?: string): Promise<void> {
+  const client = getClient()
+  const result: GA4SocialReferralHistoryEntry[] = await client.gaSocialReferralHistory(project)
+
+  if (format === 'json') {
+    console.log(JSON.stringify(result, null, 2))
+    return
+  }
+
+  if (result.length === 0) {
+    console.log('No social referral history. Run "canonry ga sync <project>" first.')
+    return
+  }
+
+  const dateWidth = 12
+  const sourceWidth = Math.min(30, Math.max(10, ...result.map((r) => r.source.length)))
+  const chanWidth = 12
+  console.log(`GA4 Social Referral History for "${project}":\n`)
+  console.log(`  ${'DATE'.padEnd(dateWidth)}  ${'SOURCE'.padEnd(sourceWidth)}  ${'CHANNEL'.padEnd(chanWidth)}  ${'SESSIONS'.padEnd(10)}${'USERS'.padEnd(8)}`)
+  console.log(`  ${'─'.repeat(dateWidth)}  ${'─'.repeat(sourceWidth)}  ${'─'.repeat(chanWidth)}  ${'─'.repeat(10)}${'─'.repeat(8)}`)
+  for (const row of result) {
+    const chanLabel = row.channelGroup === 'Paid Social' ? 'paid' : 'organic'
+    console.log(
+      `  ${row.date.padEnd(dateWidth)}  ${row.source.padEnd(sourceWidth)}  ${chanLabel.padEnd(chanWidth)}  ${String(row.sessions).padEnd(10)}${String(row.users).padEnd(8)}`,
+    )
+  }
+}
+
 export async function gaCoverage(project: string, format?: string): Promise<void> {
   const client = getClient()
   const result: GaCoverageResponse = await client.gaCoverage(project)
@@ -237,5 +291,195 @@ export async function gaCoverage(project: string, format?: string): Promise<void
     console.log(
       `  ${page.padEnd(pageWidth)}  ${String(row.sessions).padEnd(10)}${String(row.organicSessions).padEnd(10)}${String(row.users).padEnd(8)}`,
     )
+  }
+}
+
+export async function gaSocialReferralSummary(project: string, opts?: { trend?: boolean; format?: string }): Promise<void> {
+  const client = getClient()
+  const traffic: GaTrafficResponse = await client.gaTraffic(project)
+
+  if (opts?.trend) {
+    const trend: GaSocialReferralTrendResponse = await client.gaSocialReferralTrend(project)
+    if (opts.format === 'json') {
+      console.log(JSON.stringify({
+        socialSessions: traffic.socialSessions,
+        socialUsers: traffic.socialUsers,
+        totalSessions: traffic.totalSessions,
+        socialSharePct: traffic.socialSharePct,
+        topSources: traffic.socialReferrals.slice(0, 5).map((r) => ({ source: r.source, sessions: r.sessions, channel: r.channelGroup })),
+        trend: trend,
+      }, null, 2))
+      return
+    }
+
+    console.log(`Social Traffic Summary for "${project}"\n`)
+    console.log(`  Sessions: ${traffic.socialSessions} (${traffic.socialSharePct}% of ${traffic.totalSessions} total)`)
+    console.log(`  Users:    ${traffic.socialUsers}`)
+    console.log()
+
+    const fmtTrend = (pct: number | null) => pct === null ? 'n/a' : `${pct >= 0 ? '+' : ''}${pct}%`
+    console.log(`  7d trend:  ${fmtTrend(trend.trend7dPct)} (${trend.socialSessions7d} vs ${trend.socialSessionsPrev7d})`)
+    console.log(`  30d trend: ${fmtTrend(trend.trend30dPct)} (${trend.socialSessions30d} vs ${trend.socialSessionsPrev30d})`)
+    if (trend.biggestMover) {
+      const m = trend.biggestMover
+      console.log(`  Mover:     ${m.source} (${m.changePct >= 0 ? '+' : ''}${m.changePct}%, ${m.sessionsPrev7d}→${m.sessions7d})`)
+    }
+    console.log()
+
+    if (traffic.socialReferrals.length > 0) {
+      console.log('  TOP SOURCES')
+      for (const ref of traffic.socialReferrals.slice(0, 5)) {
+        const chanLabel = ref.channelGroup === 'Paid Social' ? 'paid' : 'organic'
+        console.log(`    ${ref.source.padEnd(20)} ${String(ref.sessions).padEnd(8)} sessions  (${chanLabel})`)
+      }
+    }
+    return
+  }
+
+  if (opts?.format === 'json') {
+    console.log(JSON.stringify({
+      socialSessions: traffic.socialSessions,
+      socialUsers: traffic.socialUsers,
+      totalSessions: traffic.totalSessions,
+      socialSharePct: traffic.socialSharePct,
+      topSources: traffic.socialReferrals.slice(0, 5).map((r) => ({ source: r.source, sessions: r.sessions, channel: r.channelGroup })),
+    }, null, 2))
+    return
+  }
+
+  console.log(`Social Traffic Summary for "${project}"\n`)
+  console.log(`  Sessions: ${traffic.socialSessions} (${traffic.socialSharePct}% of ${traffic.totalSessions} total)`)
+  console.log(`  Users:    ${traffic.socialUsers}`)
+  if (traffic.socialReferrals.length > 0) {
+    console.log()
+    console.log('  TOP SOURCES')
+    for (const ref of traffic.socialReferrals.slice(0, 5)) {
+      const chanLabel = ref.channelGroup === 'Paid Social' ? 'paid' : 'organic'
+      console.log(`    ${ref.source.padEnd(20)} ${String(ref.sessions).padEnd(8)} sessions  (${chanLabel})`)
+    }
+  }
+}
+
+export async function gaAttribution(project: string, opts?: { trend?: boolean; format?: string }): Promise<void> {
+  const client = getClient()
+  const traffic: GaTrafficResponse = await client.gaTraffic(project)
+
+  const fmtTrend = (pct: number | null) => pct === null ? 'n/a' : `${pct >= 0 ? '+' : ''}${pct}%`
+
+  if (opts?.trend) {
+    const trend: GaAttributionTrendResponse = await client.gaAttributionTrend(project)
+
+    if (opts.format === 'json') {
+      console.log(JSON.stringify({
+        totalSessions: traffic.totalSessions,
+        totalUsers: traffic.totalUsers,
+        organicSessions: traffic.totalOrganicSessions,
+        aiSessions: traffic.aiSessionsDeduped,
+        aiUsers: traffic.aiUsersDeduped,
+        socialSessions: traffic.socialSessions,
+        socialUsers: traffic.socialUsers,
+        aiSharePct: traffic.aiSharePct,
+        socialSharePct: traffic.socialSharePct,
+        organicSharePct: traffic.organicSharePct,
+        aiReferrals: traffic.aiReferrals,
+        socialReferrals: traffic.socialReferrals,
+        trend,
+      }, null, 2))
+      return
+    }
+
+    if (traffic.totalSessions === 0) {
+      console.log('No GA4 traffic data. Run "canonry ga sync <project>" first.')
+      return
+    }
+
+    console.log(`GA4 Attribution Overview for "${project}"\n`)
+    console.log(`  Total Sessions:   ${traffic.totalSessions}`)
+    console.log(`  Total Users:      ${traffic.totalUsers}`)
+    console.log()
+    console.log('  CHANNEL BREAKDOWN                  7d trend     30d trend')
+    console.log(`    Organic Search: ${String(traffic.totalOrganicSessions).padEnd(6)} (${String(traffic.organicSharePct).padStart(2)}%)    ${fmtTrend(trend.organic.trend7dPct).padEnd(12)} ${fmtTrend(trend.organic.trend30dPct)}`)
+    console.log(`    AI Referrals:   ${String(traffic.aiSessionsDeduped).padEnd(6)} (${String(traffic.aiSharePct).padStart(2)}%)    ${fmtTrend(trend.ai.trend7dPct).padEnd(12)} ${fmtTrend(trend.ai.trend30dPct)}`)
+    console.log(`    Social:         ${String(traffic.socialSessions).padEnd(6)} (${String(traffic.socialSharePct).padStart(2)}%)    ${fmtTrend(trend.social.trend7dPct).padEnd(12)} ${fmtTrend(trend.social.trend30dPct)}`)
+    const otherSessions = traffic.totalSessions - traffic.totalOrganicSessions - traffic.aiSessionsDeduped - traffic.socialSessions
+    if (otherSessions > 0) {
+      const otherPct = traffic.totalSessions > 0 ? Math.round((otherSessions / traffic.totalSessions) * 100) : 0
+      console.log(`    Other:          ${String(otherSessions).padEnd(6)} (${String(otherPct).padStart(2)}%)`)
+    }
+    console.log(`    ─────────────────────────────────────────────────────`)
+    console.log(`    Total:          ${String(traffic.totalSessions).padEnd(6)}         ${fmtTrend(trend.total.trend7dPct).padEnd(12)} ${fmtTrend(trend.total.trend30dPct)}`)
+
+    if (trend.aiBiggestMover) {
+      const m = trend.aiBiggestMover
+      console.log(`\n  AI Mover:     ${m.source} (${m.changePct >= 0 ? '+' : ''}${m.changePct}%, ${m.sessionsPrev7d}→${m.sessions7d} sessions/7d)`)
+    }
+    if (trend.socialBiggestMover) {
+      const m = trend.socialBiggestMover
+      console.log(`  Social Mover: ${m.source} (${m.changePct >= 0 ? '+' : ''}${m.changePct}%, ${m.sessionsPrev7d}→${m.sessions7d} sessions/7d)`)
+    }
+
+    if (traffic.lastSyncedAt) {
+      console.log(`\n  Last synced: ${traffic.lastSyncedAt}`)
+    }
+    return
+  }
+
+  if (opts?.format === 'json') {
+    console.log(JSON.stringify({
+      totalSessions: traffic.totalSessions,
+      totalUsers: traffic.totalUsers,
+      organicSessions: traffic.totalOrganicSessions,
+      aiSessions: traffic.aiSessionsDeduped,
+      aiUsers: traffic.aiUsersDeduped,
+      socialSessions: traffic.socialSessions,
+      socialUsers: traffic.socialUsers,
+      aiSharePct: traffic.aiSharePct,
+      socialSharePct: traffic.socialSharePct,
+      organicSharePct: traffic.organicSharePct,
+      aiReferrals: traffic.aiReferrals,
+      socialReferrals: traffic.socialReferrals,
+    }, null, 2))
+    return
+  }
+
+  if (traffic.totalSessions === 0) {
+    console.log('No GA4 traffic data. Run "canonry ga sync <project>" first.')
+    return
+  }
+
+  console.log(`GA4 Attribution Overview for "${project}"\n`)
+  console.log(`  Total Sessions:   ${traffic.totalSessions}`)
+  console.log(`  Total Users:      ${traffic.totalUsers}`)
+  console.log()
+  console.log('  CHANNEL BREAKDOWN')
+  console.log(`    Organic Search: ${traffic.totalOrganicSessions} sessions (${traffic.organicSharePct}%)`)
+  console.log(`    AI Referrals:   ${traffic.aiSessionsDeduped} sessions (${traffic.aiSharePct}%)`)
+  console.log(`    Social:         ${traffic.socialSessions} sessions (${traffic.socialSharePct}%)`)
+  const otherSessions = traffic.totalSessions - traffic.totalOrganicSessions - traffic.aiSessionsDeduped - traffic.socialSessions
+  if (otherSessions > 0) {
+    const otherPct = traffic.totalSessions > 0 ? Math.round((otherSessions / traffic.totalSessions) * 100) : 0
+    console.log(`    Other:          ${otherSessions} sessions (${otherPct}%)`)
+  }
+
+  if (traffic.aiReferrals.length > 0) {
+    console.log()
+    console.log('  AI SOURCES')
+    for (const ref of traffic.aiReferrals.slice(0, 10)) {
+      const dimLabel = ref.sourceDimension === 'first_user' ? 'first-visit' : ref.sourceDimension === 'manual_utm' ? 'utm' : 'session'
+      console.log(`    ${ref.source.padEnd(25)} ${String(ref.sessions).padEnd(8)} sessions  (${dimLabel})`)
+    }
+  }
+
+  if (traffic.socialReferrals.length > 0) {
+    console.log()
+    console.log('  SOCIAL SOURCES')
+    for (const ref of traffic.socialReferrals.slice(0, 10)) {
+      const chanLabel = ref.channelGroup === 'Paid Social' ? 'paid' : 'organic'
+      console.log(`    ${ref.source.padEnd(25)} ${String(ref.sessions).padEnd(8)} sessions  (${chanLabel})`)
+    }
+  }
+
+  if (traffic.lastSyncedAt) {
+    console.log(`\n  Last synced: ${traffic.lastSyncedAt}`)
   }
 }

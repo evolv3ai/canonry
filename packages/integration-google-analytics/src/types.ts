@@ -60,6 +60,16 @@ export interface GA4AiReferralRow {
   sourceDimension: GA4SourceDimension
 }
 
+export interface GA4SocialReferralRow {
+  date: string
+  source: string
+  medium: string
+  sessions: number
+  users: number
+  /** GA4 default channel group that classified this as social (e.g. 'Organic Social', 'Paid Social') */
+  channelGroup: string
+}
+
 export class GA4ApiError extends Error {
   public status: number
   constructor(message: string, status: number) {

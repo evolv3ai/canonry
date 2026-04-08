@@ -5,7 +5,7 @@ import os from 'node:os'
 import crypto from 'node:crypto'
 import Fastify from 'fastify'
 import { eq, inArray } from 'drizzle-orm'
-import { createClient, migrate, gaAiReferrals, gaTrafficSnapshots, gaTrafficSummaries } from '@ainyc/canonry-db'
+import { createClient, migrate, gaAiReferrals, gaSocialReferrals, gaTrafficSnapshots, gaTrafficSummaries } from '@ainyc/canonry-db'
 import { apiRoutes } from '../src/index.js'
 import type { Ga4CredentialStore, Ga4CredentialRecord } from '../src/ga.js'
 
@@ -240,6 +240,9 @@ describe('GA4 routes', () => {
     const fetchAiReferralsSpy = vi.spyOn(gaModule, 'fetchAiReferrals').mockResolvedValue([
       { date: '2026-03-20', source: 'chatgpt.com', medium: 'referral', sessions: 12, users: 9, sourceDimension: 'session' },
     ])
+    const fetchSocialReferralsSpy = vi.spyOn(gaModule, 'fetchSocialReferrals').mockResolvedValue([
+      { date: '2026-03-20', source: 'facebook.com', medium: 'social', sessions: 8, users: 6, channelGroup: 'Organic Social' },
+    ])
 
     const res = await app.inject({
       method: 'POST',
@@ -251,6 +254,7 @@ describe('GA4 routes', () => {
     expect(body.synced).toBe(true)
     expect(body.rowCount).toBe(2)
     expect(body.aiReferralCount).toBe(1)
+    expect(body.socialReferralCount).toBe(1)
 
     // Verify per-page rows were written
     const snapshots = db.select().from(gaTrafficSnapshots)
@@ -273,11 +277,18 @@ describe('GA4 routes', () => {
     expect(aiReferrals).toHaveLength(1)
     expect(aiReferrals[0]!.source).toBe('chatgpt.com')
 
+    const socialRefs = db.select().from(gaSocialReferrals)
+      .where(eq(gaSocialReferrals.projectId, projectId))
+      .all()
+    expect(socialRefs).toHaveLength(1)
+    expect(socialRefs[0]!.source).toBe('facebook.com')
+
     // Cleanup
     getAccessTokenSpy.mockRestore()
     fetchTrafficSpy.mockRestore()
     fetchAggregateSpy.mockRestore()
     fetchAiReferralsSpy.mockRestore()
+    fetchSocialReferralsSpy.mockRestore()
     credentials.delete('test-project')
     // Clean up synced data so it doesn't interfere with later tests
     db.delete(gaTrafficSnapshots)
@@ -285,6 +296,9 @@ describe('GA4 routes', () => {
       .run()
     db.delete(gaAiReferrals)
       .where(eq(gaAiReferrals.projectId, projectId))
+      .run()
+    db.delete(gaSocialReferrals)
+      .where(eq(gaSocialReferrals.projectId, projectId))
       .run()
     db.delete(gaTrafficSummaries)
       .where(eq(gaTrafficSummaries.projectId, projectId))
@@ -334,6 +348,7 @@ describe('GA4 routes', () => {
       totalUsers: 0,
     })
     const fetchAiReferralsSpy = vi.spyOn(gaModule, 'fetchAiReferrals').mockResolvedValue([])
+    const fetchSocialReferralsSpy = vi.spyOn(gaModule, 'fetchSocialReferrals').mockResolvedValue([])
 
     const res = await app.inject({
       method: 'POST',
@@ -349,10 +364,34 @@ describe('GA4 routes', () => {
     fetchTrafficSpy.mockRestore()
     fetchAggregateSpy.mockRestore()
     fetchAiReferralsSpy.mockRestore()
+    fetchSocialReferralsSpy.mockRestore()
     credentials.delete('test-project')
     db.delete(gaTrafficSummaries)
       .where(eq(gaTrafficSummaries.projectId, projectId))
       .run()
+  })
+
+  it('POST /ga/sync rejects invalid only parameter', async () => {
+    const now = new Date().toISOString()
+    credentials.set('test-project', {
+      projectName: 'test-project',
+      propertyId: '999888',
+      clientEmail: 'sa@test.iam.gserviceaccount.com',
+      privateKey: 'fake-key',
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/projects/test-project/ga/sync',
+      payload: { only: 'socal' },
+    })
+    expect(res.statusCode).toBe(400)
+    const body = JSON.parse(res.payload)
+    expect(body.error.message).toMatch(/Invalid "only" value/)
+
+    credentials.delete('test-project')
   })
 
   it('GET /ga/traffic returns error when no connection', async () => {
@@ -449,6 +488,12 @@ describe('GA4 routes', () => {
     ])
     expect(body.aiSessionsDeduped).toBe(17)
     expect(body.aiUsersDeduped).toBe(10)
+    expect(body.socialReferrals).toEqual([])
+    expect(body.socialSessions).toBe(0)
+    expect(body.socialUsers).toBe(0)
+    expect(body.organicSharePct).toBe(50)
+    expect(body.aiSharePct).toBe(5)
+    expect(body.socialSharePct).toBe(0)
     expect(body.lastSyncedAt).toBe(now)
 
     credentials.delete('test-project')
@@ -563,6 +608,70 @@ describe('GA4 routes', () => {
     expect(sources).toContain('perplexity.ai')
 
     credentials.delete('test-project')
+  })
+
+  it('GET /ga/social-referral-history returns error when no connection', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/projects/test-project/ga/social-referral-history',
+    })
+    expect(res.statusCode).toBe(400)
+    const body = JSON.parse(res.payload)
+    expect(body.error.message).toMatch(/No GA4 connection/)
+  })
+
+  it('GET /ga/social-referral-history returns per-date rows', async () => {
+    const now = new Date().toISOString()
+    credentials.set('test-project', {
+      projectName: 'test-project',
+      propertyId: '999888',
+      clientEmail: 'sa@test.iam.gserviceaccount.com',
+      privateKey: 'fake-key',
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    // Insert multi-date social referral data from two different sources
+    db.insert(gaSocialReferrals).values({
+      id: crypto.randomUUID(),
+      projectId,
+      date: '2026-03-17',
+      source: 'facebook.com',
+      medium: 'social',
+      sessions: 5,
+      users: 4,
+      syncedAt: now,
+    }).run()
+    db.insert(gaSocialReferrals).values({
+      id: crypto.randomUUID(),
+      projectId,
+      date: '2026-03-18',
+      source: 'linkedin.com',
+      medium: 'social',
+      sessions: 3,
+      users: 2,
+      syncedAt: now,
+    }).run()
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/projects/test-project/ga/social-referral-history',
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload) as Array<{ date: string; source: string; medium: string; sessions: number; users: number }>
+    expect(body.length).toBeGreaterThanOrEqual(2)
+    // Should be ordered by date
+    const dates = body.map((r) => r.date)
+    expect(dates).toEqual([...dates].sort())
+    // Should include both sources
+    const sources = body.map((r) => r.source)
+    expect(sources).toContain('facebook.com')
+    expect(sources).toContain('linkedin.com')
+
+    credentials.delete('test-project')
+    db.delete(gaSocialReferrals)
+      .where(eq(gaSocialReferrals.projectId, projectId))
+      .run()
   })
 
   it('GET /ga/session-history returns error when no connection', async () => {

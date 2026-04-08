@@ -2048,6 +2048,42 @@ const routeCatalog: OpenApiOperation[] = [
   },
   {
     method: 'get',
+    path: '/api/v1/projects/{name}/ga/social-referral-history',
+    summary: 'Get social media referral sessions per day grouped by source',
+    tags: ['ga4'],
+    parameters: [nameParameter],
+    responses: {
+      200: { description: 'Social referral history returned.' },
+      400: { description: 'GA4 is not connected.' },
+      404: { description: 'Project not found.' },
+    },
+  },
+  {
+    method: 'get',
+    path: '/api/v1/projects/{name}/ga/social-referral-trend',
+    summary: 'Get social referral trend (7d/30d) with biggest mover',
+    tags: ['ga4'],
+    parameters: [nameParameter],
+    responses: {
+      200: { description: 'Social referral trend returned.' },
+      400: { description: 'GA4 is not connected.' },
+      404: { description: 'Project not found.' },
+    },
+  },
+  {
+    method: 'get',
+    path: '/api/v1/projects/{name}/ga/attribution-trend',
+    summary: 'Get per-channel attribution trends (7d/30d) for organic, AI, and social',
+    tags: ['ga4'],
+    parameters: [nameParameter],
+    responses: {
+      200: { description: 'Attribution trend returned.' },
+      400: { description: 'GA4 is not connected.' },
+      404: { description: 'Project not found.' },
+    },
+  },
+  {
+    method: 'get',
     path: '/api/v1/projects/{name}/ga/session-history',
     summary: 'Get total sessions per day for the project',
     tags: ['ga4'],

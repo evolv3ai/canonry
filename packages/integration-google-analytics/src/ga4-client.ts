@@ -10,6 +10,7 @@ import {
 } from './constants.js'
 import type {
   GA4AiReferralRow,
+  GA4SocialReferralRow,
   GA4RunReportRequest,
   GA4RunReportResponse,
   GA4SourceDimension,
@@ -587,4 +588,92 @@ export async function fetchAiReferrals(
 
   ga4Log('info', 'fetch-ai-referrals.done', { propertyId, rowCount: dedupedRows.length })
   return dedupedRows
+}
+
+// Social channel groups from GA4's default channel grouping.
+// Google maintains the source→channel mapping; we filter on their classification
+// rather than hardcoding source patterns. See:
+// https://support.google.com/analytics/answer/9756891
+const SOCIAL_CHANNEL_GROUPS = ['Organic Social', 'Paid Social']
+
+/**
+ * Fetch traffic from social media referral sources using GA4's native
+ * sessionDefaultChannelGroup classification. This uses Google's maintained
+ * source→channel mapping rather than hardcoded source patterns.
+ *
+ * Uses sessionSource/sessionMedium for per-source breakdowns within the
+ * social channel groups. Does NOT query firstUserSource (acquisition, not
+ * referral) or sessionManualSource (UTM-only edge case).
+ */
+export async function fetchSocialReferrals(
+  accessToken: string,
+  propertyId: string,
+  days?: number,
+): Promise<GA4SocialReferralRow[]> {
+  validateAccessToken(accessToken)
+  validatePropertyId(propertyId)
+  const syncDays = Math.min(Math.max(1, days ?? GA4_DEFAULT_SYNC_DAYS), GA4_MAX_SYNC_DAYS)
+  const endDate = new Date()
+  const startDate = new Date()
+  startDate.setDate(startDate.getDate() - syncDays)
+
+  ga4Log('info', 'fetch-social-referrals.start', { propertyId, days: syncDays })
+
+  const PAGE_SIZE = 1000
+  const rows: GA4SocialReferralRow[] = []
+  let offset = 0
+
+  while (true) {
+    const request: GA4RunReportRequest = {
+      dateRanges: [{ startDate: formatDate(startDate), endDate: formatDate(endDate) }],
+      dimensions: [
+        { name: 'date' },
+        { name: 'sessionSource' },
+        { name: 'sessionMedium' },
+        { name: 'sessionDefaultChannelGroup' },
+      ],
+      metrics: [
+        { name: 'sessions' },
+        { name: 'totalUsers' },
+      ],
+      dimensionFilter: {
+        orGroup: {
+          expressions: SOCIAL_CHANNEL_GROUPS.map((value) => ({
+            filter: {
+              fieldName: 'sessionDefaultChannelGroup',
+              stringFilter: { matchType: 'EXACT' as const, value },
+            },
+          })),
+        },
+      },
+      limit: PAGE_SIZE,
+      offset,
+    }
+
+    const response = await runReport(accessToken, propertyId, request)
+    const pageRows: GA4SocialReferralRow[] = (response.rows ?? []).map((row) => ({
+      date: row.dimensionValues[0]!.value,
+      source: row.dimensionValues[1]!.value,
+      medium: row.dimensionValues[2]!.value,
+      sessions: parseInt(row.metricValues[0]!.value, 10) || 0,
+      users: parseInt(row.metricValues[1]!.value, 10) || 0,
+      channelGroup: row.dimensionValues[3]!.value,
+    }))
+
+    rows.push(...pageRows)
+
+    const totalRows = response.rowCount ?? 0
+    offset += pageRows.length
+    if (pageRows.length < PAGE_SIZE || offset >= totalRows) break
+  }
+
+  // Convert YYYYMMDD to YYYY-MM-DD
+  for (const row of rows) {
+    if (row.date.length === 8 && !row.date.includes('-')) {
+      row.date = `${row.date.slice(0, 4)}-${row.date.slice(4, 6)}-${row.date.slice(6, 8)}`
+    }
+  }
+
+  ga4Log('info', 'fetch-social-referrals.done', { propertyId, rowCount: rows.length })
+  return rows
 }

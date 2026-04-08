@@ -29,7 +29,10 @@ import type {
   GaSyncResponse,
   GaTrafficResponse,
   GaCoverageResponse,
+  GaSocialReferralTrendResponse,
+  GaAttributionTrendResponse,
   GA4AiReferralHistoryEntry,
+  GA4SocialReferralHistoryEntry,
   GA4SessionHistoryEntry,
   AuditLogEntry,
   GoogleConnectionDto,
@@ -551,7 +554,7 @@ export class ApiClient {
     return this.request<GaStatusResponse>('GET', `/projects/${encodeURIComponent(project)}/ga/status`)
   }
 
-  async gaSync(project: string, body?: { days?: number }): Promise<GaSyncResponse> {
+  async gaSync(project: string, body?: { days?: number; only?: string }): Promise<GaSyncResponse> {
     return this.request<GaSyncResponse>('POST', `/projects/${encodeURIComponent(project)}/ga/sync`, body ?? {})
   }
 
@@ -566,6 +569,18 @@ export class ApiClient {
 
   async gaAiReferralHistory(project: string): Promise<GA4AiReferralHistoryEntry[]> {
     return this.request<GA4AiReferralHistoryEntry[]>('GET', `/projects/${encodeURIComponent(project)}/ga/ai-referral-history`)
+  }
+
+  async gaSocialReferralHistory(project: string): Promise<GA4SocialReferralHistoryEntry[]> {
+    return this.request<GA4SocialReferralHistoryEntry[]>('GET', `/projects/${encodeURIComponent(project)}/ga/social-referral-history`)
+  }
+
+  async gaSocialReferralTrend(project: string): Promise<GaSocialReferralTrendResponse> {
+    return this.request<GaSocialReferralTrendResponse>('GET', `/projects/${encodeURIComponent(project)}/ga/social-referral-trend`)
+  }
+
+  async gaAttributionTrend(project: string): Promise<GaAttributionTrendResponse> {
+    return this.request<GaAttributionTrendResponse>('GET', `/projects/${encodeURIComponent(project)}/ga/attribution-trend`)
   }
 
   async gaSessionHistory(project: string): Promise<GA4SessionHistoryEntry[]> {
