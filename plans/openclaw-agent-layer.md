@@ -234,7 +234,7 @@ interface AgentConfigEntry {
 
 Profile defaults to `aero` → state at `~/.openclaw-aero/`, workspace at `~/.openclaw-aero/workspace/`.
 
-#### 2B. Agent workspace templates + skills packaging
+#### 2B. Agent workspace templates + skills packaging ✅ DONE
 
 All managed-agent assets must live under `packages/canonry/assets/` to be included in the published npm package (per `"files": ["assets/"]`).
 
@@ -280,7 +280,7 @@ packages/canonry/assets/agent-workspace/skills/aero/
 
 **Runtime reads in `agent-bootstrap.ts` MUST only reference `assets/agent-workspace/...`** — never repo-root paths. Use `path.join(__dirname, '../assets/agent-workspace/')` (or the resolved dist path) so it works both in dev and from the published package.
 
-#### 2C. New notification events
+#### 2C. New notification events ✅ DONE
 
 The webhook bridge needs events that don't exist yet.
 
@@ -340,7 +340,7 @@ Using `insight.critical` / `insight.high` instead of generic `regression.detecte
 **Modify:** `packages/canonry/src/cli-commands.ts` — register
 **Modify:** `packages/canonry/src/cli.ts` — add agent section to USAGE string
 
-#### 2G. Agent webhook lifecycle
+#### 2G. Agent webhook lifecycle ✅ DONE
 
 Notifications are project-scoped (`POST /projects/:name/notifications`). A one-time `canonry agent setup` cannot cover projects created later. Three pieces:
 
@@ -385,15 +385,15 @@ notifications:
 
 **Config-as-code precedence:** `apply.ts:224` replaces ALL notifications when `spec.notifications` is present — it deletes existing rows then inserts from YAML. This means `canonry apply` will wipe the auto-attached agent webhook if `spec.notifications` is declared. This is intentional: **declarative config is authoritative.** Users who use `canonry apply` with explicit notifications own that config. The `onProjectUpserted` callback fires AFTER apply completes, so auto-attach re-adds the agent webhook post-apply only if the user didn't declare their own notifications block. If they did, the agent webhook must be included in their YAML to persist. Document this in `skills/canonry-setup/references/canonry-cli.md`.
 
-#### 2H. Server integration
+#### 2H. Server integration ✅ DONE
 
 **Modify:** `packages/canonry/src/server.ts` — if `config.agent?.autoStart`, start AgentManager on server boot, stop on shutdown.
 
-#### 2I. Docs
+#### 2I. Docs ✅ DONE
 
 **Update:** `packages/canonry/AGENTS.md`, `AGENTS.md` root, CLI reference in `skills/canonry-setup/references/canonry-cli.md` — add agent commands, new notification events.
 
-**No version bump yet** — single bump at the end of the release (see Versioning below).
+**Version bump:** 1.46.0 → 1.47.0 (minor — new feature) applied to both root and packages/canonry package.json.
 
 #### Parallelization
 - 2A, 2B, 2C can proceed in parallel
@@ -406,6 +406,8 @@ notifications:
 ---
 
 ### Phase 3: Dashboard — Aero as Autonomous Analyst
+
+> **Superseded by [`plans/agent-tasks.md`](./agent-tasks.md).** The sketch below described a generic "build the dashboard surfaces" approach that assumed canonry would proxy task execution to OpenClaw's gateway over WebSocket. After investigating OpenClaw's actual primitives (webhook plugin task-flow registry, no built-in HTTP callback for flow completion, `requesterOrigin` is a chat target not an HTTP URL), the architecture was redesigned around a hybrid task queue with the Aero skill as the protocol adapter. The new plan covers the same UX goals (insight actions, task queue, Cmd+K, status indicators) but with concrete API/DB/skill contracts. The sections below are kept for historical context only.
 
 Aero is NOT a chatbot. It's an autonomous analyst that surfaces work. The dashboard reflects this with three interaction surfaces: **Insight Feed** (enhanced), **Task Queue**, and **Command Palette**.
 
@@ -608,12 +610,12 @@ Doc-only changes within each phase don't need their own bump — they're part of
 | `packages/canonry/test/run-coordinator.test.ts` | Coordinator unit tests (4 tests) | 1D | ✅ Done |
 | `packages/canonry/test/intelligence-service.test.ts` | Service integration tests (9 tests) | 1D | ✅ Done |
 | `apps/web/test/insight-mapper.test.ts` | Mapper unit tests (20 tests) | 1C | ✅ Done |
-| `packages/contracts/src/notification.ts` | Add `insight.critical` + `insight.high` events | 2 | |
-| `packages/api-routes/src/notifications.ts:11` | `VALID_EVENTS` array — must include new events | 2 | |
-| `packages/api-routes/src/index.ts:45` | Add `onProjectUpserted` to `ApiRoutesOptions` | 2 | |
-| `packages/api-routes/src/projects.ts` | Fire `onProjectUpserted` after create/update | 2 | |
-| `packages/api-routes/src/apply.ts:224` | Fire `onProjectUpserted` after apply; note: replaces all notifications | 2 | |
-| `packages/canonry/src/config.ts` | Add `AgentConfigEntry` (profile: 'aero') | 2 | |
-| `packages/canonry/package.json:26` | `"files"` field — assets/ must contain agent workspace | 2 | |
-| `packages/canonry/assets/agent-workspace/` | SOUL.md, AGENTS.md, skills/aero/ — must be under assets/ for npm | 2 | |
+| `packages/contracts/src/notification.ts` | Add `insight.critical` + `insight.high` events | 2 | ✅ Done |
+| `packages/api-routes/src/notifications.ts:11` | `VALID_EVENTS` array — must include new events | 2 | ✅ Done |
+| `packages/api-routes/src/index.ts:45` | Add `onProjectUpserted` to `ApiRoutesOptions` | 2 | ✅ Done |
+| `packages/api-routes/src/projects.ts` | Fire `onProjectUpserted` after create/update | 2 | ✅ Done |
+| `packages/api-routes/src/apply.ts:224` | Fire `onProjectUpserted` after apply; note: replaces all notifications | 2 | ✅ Done |
+| `packages/canonry/src/config.ts` | Add `AgentConfigEntry` (profile: 'aero') | 2 | ✅ Done |
+| `packages/canonry/package.json:26` | `"files"` field — assets/ must contain agent workspace | 2 | ✅ Done |
+| `packages/canonry/assets/agent-workspace/` | SOUL.md, AGENTS.md, skills/aero/ — must be under assets/ for npm | 2 | ✅ Done |
 | `packages/api-routes/package.json` | Add `@fastify/websocket` dependency for Phase 3 WS | 3 | |
