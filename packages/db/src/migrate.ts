@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import type { DatabaseClient } from './client.js'
+import { parseJsonColumn } from './json.js'
 
 const MIGRATION_SQL = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -438,6 +439,12 @@ const MIGRATIONS = [
   `CREATE INDEX IF NOT EXISTS idx_snapshots_created_at ON query_snapshots(created_at)`,
   // v36: Transaction handling and SQL injection review: verified all strings use SQLite ? binding via Drizzle.
   // No changes required for parameterization.
+  // v37: The legacy credential columns (private_key on ga_connections; access_token,
+  // refresh_token, token_expires_at on google_connections) are removed by the
+  // extractLegacyCredentials / dropLegacyCredentialColumns pair below. Callers
+  // read the rows, persist them to config.yaml, and only then drop the columns
+  // so a failed config write doesn't permanently lose credentials. Keeping the
+  // DROPs as raw SQL here would race with that read.
 ]
 
 /**
@@ -451,6 +458,153 @@ function isDuplicateColumnError(err: unknown): boolean {
   // Drizzle wraps SqliteError in a DrizzleError; check the cause too.
   if (err.cause instanceof Error && err.cause.message.includes('duplicate column name')) return true
   return false
+}
+
+export interface LegacyGoogleConnectionRow {
+  domain: string
+  connectionType: 'gsc' | 'ga4'
+  propertyId: string | null
+  sitemapUrl: string | null
+  accessToken: string | null
+  refreshToken: string
+  tokenExpiresAt: string | null
+  scopes: string[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface LegacyGa4ConnectionRow {
+  projectName: string
+  propertyId: string
+  clientEmail: string
+  privateKey: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface LegacyCredentialRows {
+  google: LegacyGoogleConnectionRow[]
+  ga4: LegacyGa4ConnectionRow[]
+}
+
+function columnExists(db: DatabaseClient, table: string, column: string): boolean {
+  // Table/column names are hard-coded constants in this module — safe to interpolate.
+  const rows = db.all(sql.raw(
+    `SELECT COUNT(*) as c FROM pragma_table_info('${table}') WHERE name = '${column}'`,
+  )) as Array<{ c: number }>
+  return (rows[0]?.c ?? 0) > 0
+}
+
+function dropColumnIfExists(db: DatabaseClient, table: string, column: string): void {
+  try {
+    db.run(sql.raw(`ALTER TABLE ${table} DROP COLUMN ${column}`))
+  } catch (err: unknown) {
+    if (!(err instanceof Error)) throw err
+    const msg = err.message
+    const causeMsg = err.cause instanceof Error ? err.cause.message : ''
+    // SQLite throws "no such column: <name>" when the column is already gone.
+    // Match the specific column name so unrelated migrations that mention a
+    // missing column are not silently swallowed.
+    const expected = `no such column: "${column}"`
+    const expectedAlt = `no such column: ${column}`
+    if (msg.includes(expected) || msg.includes(expectedAlt)) return
+    if (causeMsg.includes(expected) || causeMsg.includes(expectedAlt)) return
+    throw err
+  }
+}
+
+/**
+ * Reads any remaining credentials out of the legacy DB columns without
+ * mutating the schema. Idempotent: once the columns are gone (after
+ * `dropLegacyCredentialColumns`), subsequent calls return empty arrays.
+ *
+ * Pair with `dropLegacyCredentialColumns(db)`. Callers should extract, persist
+ * to config.yaml, and only then drop the columns — dropping first would lose
+ * credentials if the config write fails.
+ */
+export function extractLegacyCredentials(db: DatabaseClient): LegacyCredentialRows {
+  const out: LegacyCredentialRows = { google: [], ga4: [] }
+
+  if (columnExists(db, 'google_connections', 'access_token')) {
+    const rows = db.all(sql.raw(
+      `SELECT domain, connection_type, property_id, sitemap_url, access_token, refresh_token, token_expires_at, scopes, created_at, updated_at
+       FROM google_connections
+       WHERE refresh_token IS NOT NULL AND refresh_token != ''`,
+    )) as Array<{
+      domain: string
+      connection_type: string
+      property_id: string | null
+      sitemap_url: string | null
+      access_token: string | null
+      refresh_token: string
+      token_expires_at: string | null
+      scopes: string
+      created_at: string
+      updated_at: string
+    }>
+    for (const row of rows) {
+      out.google.push({
+        domain: row.domain,
+        connectionType: row.connection_type as 'gsc' | 'ga4',
+        propertyId: row.property_id,
+        sitemapUrl: row.sitemap_url,
+        accessToken: row.access_token,
+        refreshToken: row.refresh_token,
+        tokenExpiresAt: row.token_expires_at,
+        scopes: parseJsonColumn<string[]>(row.scopes, []),
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      })
+    }
+  }
+
+  if (columnExists(db, 'ga_connections', 'private_key')) {
+    const rows = db.all(sql.raw(
+      `SELECT p.name AS project_name, ga.property_id, ga.client_email, ga.private_key, ga.created_at, ga.updated_at
+       FROM ga_connections ga
+       INNER JOIN projects p ON p.id = ga.project_id
+       WHERE ga.private_key IS NOT NULL AND ga.private_key != ''`,
+    )) as Array<{
+      project_name: string
+      property_id: string
+      client_email: string
+      private_key: string
+      created_at: string
+      updated_at: string
+    }>
+    for (const row of rows) {
+      out.ga4.push({
+        projectName: row.project_name,
+        propertyId: row.property_id,
+        clientEmail: row.client_email,
+        privateKey: row.private_key,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      })
+    }
+  }
+
+  return out
+}
+
+/**
+ * Drops the legacy credential columns. Idempotent — safe to run when columns
+ * are already gone. Call only after `extractLegacyCredentials` rows have been
+ * durably persisted to config.yaml.
+ */
+export function dropLegacyCredentialColumns(db: DatabaseClient): void {
+  if (columnExists(db, 'google_connections', 'access_token')) {
+    dropColumnIfExists(db, 'google_connections', 'access_token')
+  }
+  if (columnExists(db, 'google_connections', 'refresh_token')) {
+    dropColumnIfExists(db, 'google_connections', 'refresh_token')
+  }
+  if (columnExists(db, 'google_connections', 'token_expires_at')) {
+    dropColumnIfExists(db, 'google_connections', 'token_expires_at')
+  }
+  if (columnExists(db, 'ga_connections', 'private_key')) {
+    dropColumnIfExists(db, 'ga_connections', 'private_key')
+  }
 }
 
 export function migrate(db: DatabaseClient) {
