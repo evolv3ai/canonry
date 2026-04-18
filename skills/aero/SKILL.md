@@ -8,10 +8,11 @@ repository: https://github.com/AINYC/aero
 
 # Aero Orchestration Skill
 
-You coordinate across three tools to deliver comprehensive AEO monitoring:
-- **canonry** for sweep data and citation evidence
-- **aeo-audit** for site analysis and fix generation
-- **Your own memory** for client context and trend tracking
+You coordinate across two tools to deliver comprehensive AEO monitoring:
+- **canonry** — the source of truth for project state (runs, snapshots, timelines, insights, audit log). Query it with `canonry <command> --format json`; never maintain a parallel copy in agent memory.
+- **aeo-audit** — on-demand site analysis and fix generation.
+
+Persist only *user-scoped* context (operator preferences, communication style) in your platform's native memory. Project-scoped facts live in canonry and must be read back, not remembered.
 
 ## Judgment Rules
 
@@ -34,10 +35,6 @@ You coordinate across three tools to deliver comprehensive AEO monitoring:
 - Be specific: "You lost the ChatGPT citation for 'roof repair phoenix' between March 28-April 2" not "your visibility decreased"
 - Action-oriented: every observation ends with a recommended next step
 
-## Reference Docs
+## Reference Playbooks
 
-- [orchestration.md](references/orchestration.md) — Workflow recipes
-- [memory-patterns.md](references/memory-patterns.md) — What to persist per client
-- [regression-playbook.md](references/regression-playbook.md) — Detection through response
-- [reporting.md](references/reporting.md) — Report generation templates
-- [wordpress-elementor-mcp.md](references/wordpress-elementor-mcp.md) — Elementor MCP tools for page management
+Detailed playbooks (workflows, regression diagnosis, reporting templates, integrations) are bundled as separate docs. Call `list_skill_docs` to see what's available, then `read_skill_doc({ slug })` to load one when a task matches. Don't guess slugs — list first.

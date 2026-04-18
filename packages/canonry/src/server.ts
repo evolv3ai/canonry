@@ -11,7 +11,7 @@ import Fastify from 'fastify'
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { apiRoutes } from '@ainyc/canonry-api-routes'
 import { apiKeys, auditLog, projects, parseJsonColumn, extractLegacyCredentials, dropLegacyCredentialColumns, type DatabaseClient, type LegacyCredentialRows } from '@ainyc/canonry-db'
-import { attachAgentWebhookDirect } from './agent-webhook.js'
+import os from 'node:os'
 import { geminiAdapter } from '@ainyc/canonry-provider-gemini'
 import { openaiAdapter } from '@ainyc/canonry-provider-openai'
 import { claudeAdapter } from '@ainyc/canonry-provider-claude'
@@ -50,9 +50,10 @@ import { Scheduler } from './scheduler.js'
 import { Notifier } from './notifier.js'
 import { IntelligenceService } from './intelligence-service.js'
 import { RunCoordinator } from './run-coordinator.js'
+import { SessionRegistry } from './agent/session-registry.js'
+import { registerAgentRoutes } from './agent/agent-routes.js'
+import { ApiClient } from './client.js'
 import { SnapshotService } from './snapshot-service.js'
-import { AgentManager } from './agent-manager.js'
-import { getAeroStateDir } from './agent-bootstrap.js'
 import { fetchSiteText } from './site-fetch.js'
 import { createLogger } from './logger.js'
 
@@ -308,27 +309,52 @@ export async function createServer(opts: {
   jobRunner.recoverStaleRuns()
   const notifier = new Notifier(opts.db, serverUrl)
   const intelligenceService = new IntelligenceService(opts.db)
-  const runCoordinator = new RunCoordinator(notifier, intelligenceService, (runId, projectId, result) =>
-    notifier.dispatchInsightWebhooks(runId, projectId, result),
+  // Build the Aero ApiClient from the in-memory server config rather than
+  // loadConfig() so tests that set CANONRY_CONFIG_DIR after spawning the
+  // server don't fail at construction time.
+  const aeroClient = new ApiClient(opts.config.apiUrl, opts.config.apiKey, { skipProbe: true })
+  const sessionRegistry = new SessionRegistry({
+    db: opts.db,
+    client: aeroClient,
+    config: opts.config,
+  })
+
+  const runCoordinator = new RunCoordinator(
+    notifier,
+    intelligenceService,
+    (runId, projectId, result) => notifier.dispatchInsightWebhooks(runId, projectId, result),
+    async ({ runId, projectId, insightCount, criticalOrHigh }) => {
+      const project = opts.db
+        .select({ name: projects.name })
+        .from(projects)
+        .where(eq(projects.id, projectId))
+        .get()
+      if (!project) return
+      sessionRegistry.queueFollowUp(project.name, {
+        role: 'user',
+        content:
+          `[system] Run ${runId} completed for project ${project.name}. ` +
+          `${insightCount} insights generated (${criticalOrHigh} critical/high). ` +
+          `Use get_run to inspect the run and get_insights to review new findings. ` +
+          `Surface anything notable briefly — skip chit-chat.`,
+        timestamp: Date.now(),
+      })
+      // Fire-and-forget drain — the registry logs drain errors internally.
+      void sessionRegistry.drainNow(project.name)
+    },
   )
   jobRunner.onRunCompleted = (runId, projectId) => runCoordinator.onRunCompleted(runId, projectId)
   const snapshotService = new SnapshotService(registry)
 
-  // Agent lifecycle (optional — only when agent config exists)
-  let agentManager: AgentManager | undefined
-  let agentAutoStarted = false
-  if (opts.config.agent) {
-    const stateDir = getAeroStateDir(opts.config.agent.profile ?? 'aero')
-    agentManager = new AgentManager(opts.config.agent, stateDir)
-    if (opts.config.agent.autoStart) {
-      try {
-        await agentManager.start()
-        agentAutoStarted = true
-        app.log.info({ pid: agentManager.status().pid }, 'Agent gateway started')
-      } catch (err) {
-        app.log.error({ err }, 'Failed to auto-start agent gateway')
-      }
-    }
+  // OpenClaw gateway was removed in the native-agent-loop rewrite. If the user
+  // previously ran `canonry agent setup`, warn once so they know the state dir
+  // is orphaned and safe to delete.
+  const orphanedOpenClawDir = path.join(os.homedir(), '.openclaw-aero')
+  if (fs.existsSync(orphanedOpenClawDir)) {
+    app.log.warn(
+      { path: orphanedOpenClawDir },
+      'OpenClaw gateway is no longer used. Remove ~/.openclaw-aero/ manually to reclaim the directory.',
+    )
   }
 
   const scheduler = new Scheduler(opts.db, {
@@ -727,6 +753,11 @@ export async function createServer(opts: {
     skipAuth: false,
     sessionCookieName: SESSION_COOKIE_NAME,
     resolveSessionApiKeyId,
+    // Local-only Aero agent routes. Registered here so they inherit api-routes'
+    // auth plugin — bare `registerAgentRoutes(app, ...)` would skip auth.
+    registerAuthenticatedRoutes: async (scope) => {
+      registerAgentRoutes(scope, { db: opts.db, sessionRegistry })
+    },
     getGoogleAuthConfig: () => getGoogleAuthConfig(opts.config),
     googleConnectionStore,
     googleStateSecret,
@@ -760,6 +791,7 @@ export async function createServer(opts: {
     openApiInfo: {
       title: 'Canonry API',
       version: PKG_VERSION,
+      includeCanonryLocal: true,
     },
     providerSummary,
     providerAdapters: [...API_ADAPTERS, ...BROWSER_ADAPTERS].map(a => ({
@@ -901,17 +933,6 @@ export async function createServer(opts: {
     onProjectDeleted: (projectId: string) => {
       scheduler.remove(projectId)
     },
-    onProjectUpserted: agentManager && opts.config.agent?.autoStart ? (_projectId: string, projectName: string) => {
-      try {
-        const gatewayPort = opts.config.agent?.gatewayPort ?? 3579
-        const result = attachAgentWebhookDirect(opts.db, _projectId, gatewayPort)
-        if (result === 'attached') {
-          app.log.info({ projectName }, 'Auto-attached agent webhook')
-        }
-      } catch (err) {
-        app.log.error({ err, projectName }, 'Failed to auto-attach agent webhook')
-      }
-    } : undefined,
     getTelemetryStatus: () => {
       const enabled = isTelemetryEnabled()
       return {
@@ -1016,9 +1037,11 @@ export async function createServer(opts: {
       if (basePath) clientConfig.basePath = basePath
 
       const configScript = `<script>window.__CANONRY_CONFIG__=${JSON.stringify(clientConfig)}</script>`
-      // Inject <base href> so relative asset paths resolve correctly at any sub-path.
-      // This must come before other resource tags in <head>.
-      const baseTag = basePath ? `<base href="${basePath}">` : ''
+      // Inject <base href> unconditionally so relative asset paths (`./assets/…`)
+      // resolve against the mount point instead of the current URL. Without this,
+      // deep-links like `/projects/ainyc` request `/projects/assets/…js`, hit the
+      // SPA fallback, and receive HTML where the browser expects JS.
+      const baseTag = `<base href="${basePath ?? '/'}">`
       return html.replace('<head>', `<head>${baseTag}`).replace('</head>', `${configScript}</head>`)
     }
 
@@ -1100,13 +1123,6 @@ export async function createServer(opts: {
   // Graceful shutdown
   app.addHook('onClose', async () => {
     scheduler.stop()
-    if (agentManager && agentAutoStarted) {
-      try {
-        await agentManager.stop()
-      } catch (err) {
-        app.log.error({ err }, 'Failed to stop agent gateway')
-      }
-    }
   })
 
   return app

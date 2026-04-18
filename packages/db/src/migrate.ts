@@ -445,6 +445,28 @@ const MIGRATIONS = [
   // read the rows, persist them to config.yaml, and only then drop the columns
   // so a failed config write doesn't permanently lose credentials. Keeping the
   // DROPs as raw SQL here would race with that read.
+
+  // v38: Aero session registry — one rolling session per project.
+  `CREATE TABLE IF NOT EXISTS agent_sessions (
+    id                TEXT PRIMARY KEY,
+    project_id        TEXT NOT NULL UNIQUE REFERENCES projects(id) ON DELETE CASCADE,
+    system_prompt     TEXT NOT NULL,
+    model_provider    TEXT NOT NULL,
+    model_id          TEXT NOT NULL,
+    messages          TEXT NOT NULL DEFAULT '[]',
+    follow_up_queue   TEXT NOT NULL DEFAULT '[]',
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_agent_sessions_project ON agent_sessions(project_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_agent_sessions_updated ON agent_sessions(updated_at)`,
+
+  // v39: Align Aero provider IDs with sweep naming — anthropic→claude, google→gemini.
+  // Old rows predating the rename would fail to rehydrate because the canonical
+  // registry no longer recognizes 'anthropic'/'google'. Safe to re-run: the
+  // UPDATE is a no-op once the rename has been applied.
+  `UPDATE agent_sessions SET model_provider = 'claude' WHERE model_provider = 'anthropic'`,
+  `UPDATE agent_sessions SET model_provider = 'gemini' WHERE model_provider = 'google'`,
 ]
 
 /**

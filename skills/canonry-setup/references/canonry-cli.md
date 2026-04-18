@@ -298,51 +298,51 @@ canonry sitemap inspect <project>
 
 ## Agent
 
-`canonry agent setup` is the single entry point for configuring the agent. It handles everything:
-canonry initialization, agent runtime installation, profile setup, LLM credential configuration,
-and workspace seeding. If canonry is not yet configured, it runs the interactive init flow first
-(prompting for monitoring provider keys and agent LLM credentials).
+Canonry ships the built-in **Aero** agent (backed by pi-agent-core) for users
+who don't already have one, plus a webhook integration for users who want to
+drive Canonry from Claude Code / Codex / a custom agent.
+
+### Built-in Aero (one-shot CLI)
 
 ```bash
-# Full setup (interactive — prompts for provider keys + agent LLM)
-canonry agent setup
+# One-shot turn — Aero picks its own tools, streams events to stdout.
+canonry agent ask <project> "<prompt>"
+canonry agent ask <project> "<prompt>" --format json      # JSON event stream
 
-# Non-interactive (flags or env vars)
-canonry agent setup --gemini-key <key> --agent-key <key>
-canonry agent setup --agent-provider openrouter --agent-key <key> --agent-model openrouter/anthropic/claude-sonnet-4-6
-GEMINI_API_KEY=<key> canonry agent setup --agent-key <key> --format json
+# Select a specific provider / model (otherwise auto-detected from config).
+canonry agent ask <project> "<prompt>" --provider anthropic --model claude-opus-4-7
+canonry agent ask <project> "<prompt>" --provider zai      --model glm-5.1
+canonry agent ask <project> "<prompt>" --provider openai
+canonry agent ask <project> "<prompt>" --provider google
 
-# Lifecycle
-canonry agent start                              # start agent gateway as background process
-canonry agent stop                               # stop the gateway process
-canonry agent status                             # check if gateway is running
-canonry agent status --format json               # JSON output
-canonry agent reset                              # stop gateway and wipe workspace
-
-# Setup flags
-canonry agent setup --agent-provider <id>        # LLM provider (default: anthropic)
-canonry agent setup --agent-key <key>            # API key for agent LLM
-canonry agent setup --agent-model <model>        # model id (e.g. anthropic/claude-sonnet-4-6)
-canonry agent setup --gateway-port 3579          # gateway WebSocket port
-canonry agent setup --gemini-key <key>           # monitoring provider keys (passed to init)
-canonry agent setup --openai-key <key>
-canonry agent setup --claude-key <key>
-canonry agent setup --perplexity-key <key>
-
-# Webhook lifecycle
-canonry agent attach <project>                   # register agent webhook for project
-canonry agent attach <project> --format json     # JSON output
-canonry agent detach <project>                   # remove agent webhook from project
-canonry agent detach <project> --format json     # JSON output
+# Restrict the tool surface. Default is --scope all (full 13-tool surface:
+# 7 read + 6 write). --scope read-only exposes only the 7 read tools and
+# is what the dashboard bar uses by default so pasted "Copy as CLI"
+# commands can't enable writes the UI turn couldn't perform.
+canonry agent ask <project> "<prompt>" --scope read-only
+canonry agent ask <project> "<prompt>" --scope all
 ```
 
-**Setup flow:** init canonry (if needed) → install agent runtime (if needed) → configure profile → configure gateway → set agent LLM credentials → seed workspace with skills.
+**Provider detection order** when `--provider` is omitted: `anthropic` →
+`openai` → `google` → `zai`, whichever has an API key present first
+(from `~/.canonry/config.yaml` providers block, or the matching env var
+`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` / `ZAI_API_KEY`).
 
-**Agent LLM credentials** are stored in the agent env file (e.g. `ANTHROPIC_API_KEY=...`) and loaded into the gateway process at start time. The model is set via the agent CLI.
+Conversations **persist per project** — `canonry agent ask` continues the
+same rolling thread each invocation. Reset with `DELETE /api/v1/projects/<name>/agent/transcript`
+or via the dashboard bar's reset button.
 
-**Re-running is safe:** setup is idempotent — it skips steps that are already configured.
+### External agents (webhook)
 
-**Agent webhooks:** `canonry agent attach <project>` registers a webhook notification on the project so the agent receives events (`run.completed`, `insight.critical`, `insight.high`, `citation.gained`). Idempotent — skips if an agent webhook already exists. `canonry agent detach <project>` removes the agent webhook. When `autoStart` is enabled, the server auto-attaches webhooks to newly created or applied projects.
+```bash
+# Wire an external agent webhook to a project
+canonry agent attach <project> --url <webhook-url>        # register webhook subscription
+canonry agent attach <project> --url <url> --format json  # JSON output
+canonry agent detach <project>                            # remove the agent webhook
+canonry agent detach <project> --format json              # JSON output
+```
+
+**Agent webhooks** fire on `run.completed`, `insight.critical`, `insight.high`, and `citation.gained`. The attach/detach pair is idempotent per project (one agent webhook per project, matched by source tag).
 
 ## Output Formats
 

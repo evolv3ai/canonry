@@ -54,50 +54,59 @@ canonry apply <file...>                          # multi-doc YAML + multiple fil
 canonry export <project>
 
 # Agent layer
-canonry agent setup                              # full setup: init + install + configure + seed
-canonry agent setup --agent-key <key>            # non-interactive with flags
-canonry agent start                              # start agent gateway as background process
-canonry agent stop                               # stop agent gateway
-canonry agent status                             # check agent state
-canonry agent reset                              # stop + wipe workspace
-canonry agent attach <project>                   # attach agent webhook to project
-canonry agent detach <project>                   # detach agent webhook from project
+canonry agent ask <project> "<prompt>"               # one-shot turn against built-in Aero
+canonry agent ask <project> "<prompt>" --provider zai --format json
+canonry agent attach <project> --url <webhook-url>   # subscribe an external agent to run/insight events
+canonry agent detach <project>                       # remove the agent webhook
 ```
 
 ## Agent Layer
 
-Canonry ships a bundled AI agent ("Aero") that orchestrates sweeps, analyzes results, and generates reports. The agent is a consumer of the same CLI and API available to everyone — it has no privileged access or hidden surface.
+Canonry ships a built-in AI agent called **Aero**, backed by
+[`@mariozechner/pi-agent-core`](https://github.com/badlogic/pi-mono). Aero
+is an AEO analyst: it reads project state, analyzes regressions, acts
+through a typed tool surface (runs sweeps, dismisses insights, attaches
+webhooks, updates schedules), and **wakes up unprompted** when runs
+complete — producing an analysis without a user request.
 
-### Setup
+Users who prefer their own agent (Claude Code, Codex, custom) still get
+the external-agent webhook path via `canonry agent attach <url>`.
 
-`canonry agent setup` is the single entry point. It handles:
+### Built-in Aero (native loop)
 
-1. Canonry initialization (if no config exists) — prompts for monitoring provider keys and agent LLM credentials, or accepts them via flags/env vars.
-2. Agent runtime installation (if not found), with a pinned Node floor of `>=22.14.0` so setup fails clearly on unsupported runtimes.
-3. Agent profile configuration in local mode.
-4. Gateway configuration — sets the local mode and gateway port.
-5. Agent LLM credentials — stored in the agent env file (e.g. `ANTHROPIC_API_KEY=...`), model set via the agent CLI.
-6. Workspace seeding — copies bundled skills to the agent workspace.
+- **CLI:** `canonry agent ask <project> "<prompt>"` — one-shot, streams
+  `AgentEvent`s to stdout. Supports `--provider claude|openai|gemini|zai`
+  and `--format json`.
+- **Dashboard:** the bottom command bar on every project-scoped route.
+  SSE-streamed. Starter buttons cover the common ops (status, insights,
+  last failed run, schedule).
+- **Proactive:** `RunCoordinator` fires a synthesized user message into the
+  session's follow-up queue after each `run.completed`; `SessionRegistry.drainNow`
+  wakes the agent to analyze and writes the response back to the transcript
+  before the next interaction.
+- **Persistence:** one rolling session per project in the `agent_sessions`
+  table. Transcript + queued follow-ups survive `canonry serve` restarts.
 
-Setup is idempotent — safe to re-run. For non-interactive use: `canonry agent setup --gemini-key <key> --agent-key <key> --format json`.
+Key files:
+- `packages/canonry/src/agent/session.ts` — `createAeroSession` (pi integration)
+- `packages/canonry/src/agent/session-registry.ts` — hybrid in-memory + DB registry
+- `packages/canonry/src/agent/tools.ts` — 13 tools (7 read + 6 write)
+- `packages/canonry/src/agent/agent-routes.ts` — Fastify SSE endpoints
+- `apps/web/src/components/shared/AeroBar.tsx` — dashboard UI
 
-### Runtime
+### External agents (webhook)
 
-`canonry agent start` spawns the agent gateway as a detached process. The gateway process inherits LLM credentials from the agent env file. `canonry agent stop` sends SIGTERM with escalation to SIGKILL.
+`canonry agent attach <project> --url <webhook-url>` registers a webhook for
+the project. `canonry agent detach <project>` removes it. Events:
+`run.completed`, `insight.critical`, `insight.high`, `citation.gained`.
 
-### Webhook lifecycle
+### Notification events (shared)
 
-`canonry agent attach <project>` registers an agent webhook notification for the named project (idempotent — checks for existing agent webhook before creating). `canonry agent detach <project>` removes it. When `config.agent.autoStart` is true, the server auto-attaches webhooks to newly created/applied projects via the `onProjectUpserted` callback.
-
-### Notification events
-
-The notification system supports these events: `citation.lost`, `citation.gained`, `run.completed`, `run.failed`, `insight.critical`, `insight.high`. The `insight.critical` and `insight.high` events fire when the intelligence engine generates critical- or high-severity insights after a run. These are dispatched by the `RunCoordinator` after `IntelligenceService.analyzeAndPersist()` completes.
-
-### Key files
-
-- `packages/canonry/src/agent-bootstrap.ts` — setup helpers (detect, install, configure, seed)
-- `packages/canonry/src/agent-manager.ts` — process lifecycle (start/stop/status)
-- `packages/canonry/src/commands/agent.ts` — thin orchestrator for setup, delegates to bootstrap helpers
+The notification system supports `citation.lost`, `citation.gained`, `run.completed`,
+`run.failed`, `insight.critical`, `insight.high`. `insight.critical` and
+`insight.high` fire when the intelligence engine generates critical- or
+high-severity insights after a run — dispatched by `RunCoordinator` after
+`IntelligenceService.analyzeAndPersist()` completes.
 
 ## Dependency Boundary
 

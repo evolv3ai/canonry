@@ -32,6 +32,8 @@ erDiagram
 
   projects ||--o{ bing_url_inspections : has
   projects ||--o{ bing_keyword_stats : has
+
+  projects ||--o| agent_sessions : "has (1:1)"
 ```
 
 ## Table Groups
@@ -89,6 +91,12 @@ erDiagram
 |-------|---------|
 | **api_keys** | API authentication. Unique: `keyHash` |
 | **usage_counters** | Rate limiting and usage tracking. Unique: `(scope, period, metric)` |
+
+### Agent
+
+| Table | Purpose |
+|-------|---------|
+| **agent_sessions** | One rolling Aero session per project. Durable half of the hybrid session registry — stores transcript, queued follow-ups, and chosen provider/model so a live pi-agent-core Agent can be rehydrated after a restart. Unique: `projectId`. FK: projectId → projects |
 
 ## JSON Columns
 

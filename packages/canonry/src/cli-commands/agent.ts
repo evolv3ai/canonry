@@ -1,52 +1,85 @@
-import { agentStatus, agentStart, agentStop, agentReset, agentSetup, agentAttach, agentDetach } from '../commands/agent.js'
+import { agentAttach, agentDetach } from '../commands/agent.js'
+import { agentAsk, type AgentAskScope } from '../commands/agent-ask.js'
+import { agentProviders } from '../commands/agent-providers.js'
+import { agentTranscript, agentTranscriptReset } from '../commands/agent-transcript.js'
+import { coerceAgentProvider, listAgentProviders } from '../agent/session.js'
 import type { CliCommandSpec } from '../cli-dispatch.js'
 import { getString, stringOption } from '../cli-command-helpers.js'
 
+const AGENT_ASK_SCOPES: readonly AgentAskScope[] = ['all', 'read-only']
+
 export const AGENT_CLI_COMMANDS: readonly CliCommandSpec[] = [
   {
-    path: ['agent', 'status'],
-    usage: 'canonry agent status [--format json]',
-    options: {},
+    path: ['agent', 'ask'],
+    usage: `canonry agent ask <project> "<prompt>" [--provider ${listAgentProviders().join('|')}] [--model <id>] [--scope all|read-only] [--format json]`,
+    options: {
+      provider: stringOption(),
+      model: stringOption(),
+      scope: stringOption(),
+    },
     run: async (input) => {
-      await agentStatus({ format: input.format })
+      const [project, ...rest] = input.positionals
+      if (!project || rest.length === 0) {
+        console.error('Usage: canonry agent ask <project> "<prompt>"')
+        process.exitCode = 1
+        return
+      }
+      const providerInput = getString(input.values, 'provider')
+      if (providerInput && !coerceAgentProvider(providerInput)) {
+        console.error(`--provider must be one of: ${listAgentProviders().join(', ')}`)
+        process.exitCode = 1
+        return
+      }
+      const scopeInput = getString(input.values, 'scope')
+      if (scopeInput && !AGENT_ASK_SCOPES.includes(scopeInput as AgentAskScope)) {
+        console.error(`--scope must be one of: ${AGENT_ASK_SCOPES.join(', ')}`)
+        process.exitCode = 1
+        return
+      }
+      await agentAsk({
+        project,
+        prompt: rest.join(' '),
+        provider: coerceAgentProvider(providerInput),
+        modelId: getString(input.values, 'model'),
+        scope: scopeInput as AgentAskScope | undefined,
+        format: input.format,
+      })
     },
   },
   {
-    path: ['agent', 'start'],
-    usage: 'canonry agent start [--format json]',
-    options: {},
-    run: async (input) => {
-      await agentStart({ format: input.format })
-    },
-  },
-  {
-    path: ['agent', 'stop'],
-    usage: 'canonry agent stop [--format json]',
-    options: {},
-    run: async (input) => {
-      await agentStop({ format: input.format })
-    },
-  },
-  {
-    path: ['agent', 'reset'],
-    usage: 'canonry agent reset [--format json]',
-    options: {},
-    run: async (input) => {
-      await agentReset({ format: input.format })
-    },
-  },
-  {
-    path: ['agent', 'attach'],
-    usage: 'canonry agent attach <project> [--format json]',
+    path: ['agent', 'providers'],
+    usage: 'canonry agent providers <project> [--format json]',
     options: {},
     run: async (input) => {
       const project = input.positionals[0]
       if (!project) {
-        console.error('Usage: canonry agent attach <project>')
+        console.error('Usage: canonry agent providers <project>')
         process.exitCode = 1
         return
       }
-      await agentAttach({ project, format: input.format })
+      await agentProviders({ project, format: input.format })
+    },
+  },
+  {
+    path: ['agent', 'attach'],
+    usage: 'canonry agent attach <project> --url <webhook-url> [--format json]',
+    options: {
+      url: stringOption(),
+    },
+    run: async (input) => {
+      const project = input.positionals[0]
+      if (!project) {
+        console.error('Usage: canonry agent attach <project> --url <webhook-url>')
+        process.exitCode = 1
+        return
+      }
+      const url = getString(input.values, 'url')
+      if (!url) {
+        console.error('Missing required --url flag. Specify the agent webhook URL to attach.')
+        process.exitCode = 1
+        return
+      }
+      await agentAttach({ project, url, format: input.format })
     },
   },
   {
@@ -64,42 +97,31 @@ export const AGENT_CLI_COMMANDS: readonly CliCommandSpec[] = [
     },
   },
   {
-    path: ['agent', 'setup'],
-    usage: 'canonry agent setup [--agent-provider <id>] [--agent-key <key>] [--agent-model <model>] [--gateway-port <port>] [--gemini-key <key>] [--openai-key <key>] [--claude-key <key>] [--perplexity-key <key>] [--format json]',
-    options: {
-      'agent-provider': stringOption(),
-      'agent-key': stringOption(),
-      'agent-model': stringOption(),
-      'gateway-port': { type: 'string' },
-      'gemini-key': stringOption(),
-      'openai-key': stringOption(),
-      'claude-key': stringOption(),
-      'perplexity-key': stringOption(),
-      'local-url': stringOption(),
-      'local-model': stringOption(),
-      'local-key': stringOption(),
-      'google-client-id': stringOption(),
-      'google-client-secret': stringOption(),
-    },
+    path: ['agent', 'transcript'],
+    usage: 'canonry agent transcript <project> [--format json]',
+    options: {},
     run: async (input) => {
-      const portStr = input.values['gateway-port']
-      const gatewayPort = typeof portStr === 'string' ? Number.parseInt(portStr, 10) : undefined
-      await agentSetup({
-        agentProvider: getString(input.values, 'agent-provider'),
-        agentKey: getString(input.values, 'agent-key'),
-        agentModel: getString(input.values, 'agent-model'),
-        gatewayPort,
-        format: input.format,
-        geminiKey: getString(input.values, 'gemini-key'),
-        openaiKey: getString(input.values, 'openai-key'),
-        claudeKey: getString(input.values, 'claude-key'),
-        perplexityKey: getString(input.values, 'perplexity-key'),
-        localUrl: getString(input.values, 'local-url'),
-        localModel: getString(input.values, 'local-model'),
-        localKey: getString(input.values, 'local-key'),
-        googleClientId: getString(input.values, 'google-client-id'),
-        googleClientSecret: getString(input.values, 'google-client-secret'),
-      })
+      const project = input.positionals[0]
+      if (!project) {
+        console.error('Usage: canonry agent transcript <project>')
+        process.exitCode = 1
+        return
+      }
+      await agentTranscript({ project, format: input.format })
+    },
+  },
+  {
+    path: ['agent', 'reset'],
+    usage: 'canonry agent reset <project> [--format json]',
+    options: {},
+    run: async (input) => {
+      const project = input.positionals[0]
+      if (!project) {
+        console.error('Usage: canonry agent reset <project>')
+        process.exitCode = 1
+        return
+      }
+      await agentTranscriptReset({ project, format: input.format })
     },
   },
 ]

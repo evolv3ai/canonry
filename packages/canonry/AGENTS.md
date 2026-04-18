@@ -23,10 +23,17 @@ The publishable npm package (`@ainyc/canonry`). Bundles the CLI, local Fastify s
 | `src/commands/health-cmd.ts` | `health` command implementation |
 | `src/commands/backfill.ts` | Historical recomputation for answer visibility fields and insights |
 | `src/commands/ga.ts` | GA4 commands: `ga sync`, `ga traffic`, `ga status`, `ga social-referral-history`, `ga social-referral-summary`, `ga attribution` |
-| `src/agent-bootstrap.ts` | Agent runtime detection, installation, profile setup, gateway config, credential resolution, workspace seeding |
-| `src/agent-manager.ts` | Agent gateway process lifecycle — spawns the gateway as a detached process, loads `.env` into process env |
-| `src/commands/agent.ts` | Thin orchestrator for `agent setup` + implementations for `status/start/stop/reset` |
-| `src/cli-commands/agent.ts` | CLI command specs for the `agent` subcommand family |
+| `src/agent-webhook.ts` | `AGENT_WEBHOOK_EVENTS` — event list subscribed to by `canonry agent attach` |
+| `src/commands/agent.ts` | `agentAttach` / `agentDetach` — wire an external agent's webhook to a project |
+| `src/commands/agent-ask.ts` | `agentAsk` — one-shot turn against the built-in Aero agent, streams events to stdout |
+| `src/cli-commands/agent.ts` | CLI specs for `agent ask / attach / detach` |
+| `src/agent/session.ts` | `createAeroSession` — constructs a pi-agent-core Agent scoped to a canonry project (composes `soul.md` + `SKILL.md` into the system prompt, wires model, tools, API-key resolver) |
+| `src/agent/session-registry.ts` | Hybrid session registry — in-memory `Map<project, Agent>` + durable `agent_sessions` row per project. Handles hydration, persistence, follow-up queueing, and post-`agent_end` auto-drain. |
+| `src/agent/tools.ts` | 13 canonry-state `AgentTool` definitions — 7 read (`get_status`, `get_health`, `get_timeline`, `get_insights`, `list_keywords`, `list_competitors`, `get_run`) and 6 write (`run_sweep`, `dismiss_insight`, `add_keywords`, `add_competitors`, `update_schedule`, `attach_agent_webhook`) |
+| `src/agent/skill-tools.ts` | 2 skill-doc tools (`list_skill_docs`, `read_skill_doc`) — progressive disclosure of bundled reference playbooks. Ride in every scope. |
+| `src/agent/skill-paths.ts` | `resolveAeroSkillDir` — finds the on-disk `skills/aero/` (prod/dev/repo candidate paths) for the prompt loader and skill-doc tools |
+| `src/agent/agent-routes.ts` | Fastify routes — `GET/DELETE transcript` + `POST prompt` (SSE) for the dashboard Aero bar |
+| `src/agent/pi-runtime.ts` | Thin factory re-exporting pi-agent-core types with canonry-scoped construction |
 
 ## Patterns
 
@@ -78,23 +85,49 @@ Providers are registered at server startup in `server.ts`. Each provider adapter
 - **Forgetting `--format json` support** — every output command needs it.
 - **Forgetting to register command in `cli-commands.ts`** — the command won't be accessible.
 
-## Agent setup flow
+## Agent layer (Aero)
 
-`canonry agent setup` is the single entry point. The orchestrator in `commands/agent.ts` calls helpers from `agent-bootstrap.ts`:
+Canonry ships a built-in AI agent called **Aero**, built on
+[`@mariozechner/pi-agent-core`](https://github.com/badlogic/pi-mono). Users
+who already have their own agent (Claude Code, Codex, custom) can still
+consume Canonry through the external-agent webhook.
 
-1. **Init canonry** — calls `initCommand()` if no `config.yaml` exists. Prompts for monitoring provider keys and agent LLM credentials (provider, key, model). Accepts all values via flags or env vars for non-interactive use.
-2. **Detect/install agent runtime** — checks PATH, installs the pinned agent runtime if missing, enforces Canonry's pinned Node floor of `>=22.14.0`, and verifies that the detected binary version matches the pinned package version.
-3. **Save agent config** — persists `{binary, profile, gatewayPort}` to canonry `config.yaml` via `saveConfigPatch()`.
-4. **Initialize profile** — initializes the agent profile in local mode, non-interactively.
-5. **Configure gateway** — sets the local mode and gateway port.
-6. **Configure LLM** — `resolveAgentCredentials()` resolves key from flags/env/existing `.env`. `writeAgentEnv()` writes to the agent env file. The model is set via the agent CLI.
-7. **Seed workspace** — copies skills from `assets/agent-workspace/` into the agent workspace.
+### Built-in agent (native loop)
 
-At runtime, `AgentManager.start()` spawns the agent gateway as a detached process, injecting `.env` values into the process environment.
+- **CLI**: `canonry agent ask <project> "<prompt>"` — one-shot turn. Streams
+  `AgentEvent` lines to stdout (or JSON with `--format json`). Supports
+  `--provider claude|openai|gemini|zai` and `--model <id>`.
+- **Dashboard**: bottom command bar (`AeroBar`) on every project-scoped
+  route. SSE-streamed via `POST /api/v1/projects/:name/agent/prompt`.
+- **Proactive**: `RunCoordinator` enqueues a synthesized `[system]` follow-up
+  into the project's session after every `run.completed`; `SessionRegistry.drainNow`
+  wakes the agent unprompted so insights/failures get analyzed without a
+  user click.
+- **Persistence**: one `agent_sessions` row per project. Transcript + queued
+  follow-ups survive `canonry serve` restarts. See `docs/data-model.md`.
 
-### Agent webhook lifecycle
+Tool surface has two layers:
+- **Canonry state** (`src/agent/tools.ts`) — 7 read (status/health/timeline/
+  insights/keywords/competitors/run detail) + 6 write (run sweep / dismiss
+  insight / add keywords / add competitors / update schedule / attach webhook).
+  Project name is closed over by `ToolContext` so the LLM can't target the
+  wrong project; tools surface their intent via `tool_execution_start` events.
+- **Skill docs** (`src/agent/skill-tools.ts`) — 2 tools (`list_skill_docs`,
+  `read_skill_doc`) for progressive disclosure of bundled reference playbooks.
+  Ride in every scope. `SKILL.md` stays lightweight; detailed playbooks
+  (workflows, regression diagnosis, reporting templates, integrations) load
+  on-demand via slug.
 
-`canonry agent attach <project>` registers an agent webhook notification for the named project (subscribes to `run.completed`, `insight.critical`, `insight.high`, `citation.gained`). Idempotent — checks for an existing agent webhook before creating. `canonry agent detach <project>` removes the agent webhook. When `config.agent.autoStart` is true, the server auto-attaches webhooks to newly created/applied projects via the `onProjectUpserted` callback.
+System prompt is composed from `skills/aero/soul.md` (identity/voice/values)
++ `skills/aero/SKILL.md` (task rules). Soul is prepended so identity frames
+the task instructions. Both files ship in `assets/agent-workspace/skills/aero/`.
+
+### External agents (webhook lifecycle)
+
+`canonry agent attach <project> --url <webhook-url>` registers an agent
+webhook subscribing to `run.completed`, `insight.critical`, `insight.high`,
+`citation.gained`. Idempotent — skipped if one already exists on the project.
+`canonry agent detach <project>` removes it.
 
 ## See Also
 

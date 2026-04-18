@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/@ainyc/canonry)](https://www.npmjs.com/package/@ainyc/canonry) [![License: FSL-1.1-ALv2](https://img.shields.io/badge/License-FSL--1.1--ALv2-blue.svg)](https://fsl.software/) [![Node.js >= 22.14](https://img.shields.io/badge/node-%3E%3D22.14-brightgreen)](https://nodejs.org)
 
-Canonry is an agent-first AEO platform — CLI- and API-native, with a bundled AI agent. It tracks how ChatGPT, Gemini, Claude, and Perplexity cite your site, detects regressions, diagnoses causes, coordinates fixes, and reports results.
+Canonry is an agent-first AEO platform. It ships a built-in AI agent — **Aero** — that reads project state, analyzes regressions, acts through a typed tool surface, and wakes up unprompted when runs complete. Users who prefer their own agent (Claude Code, Codex, custom) consume Canonry through the same CLI/API surface or subscribe via webhook. It tracks how ChatGPT, Gemini, Claude, and Perplexity cite your site, detects regressions, diagnoses causes, coordinates fixes, and reports results.
 
 AEO (Answer Engine Optimization) is about making sure your content shows up accurately in AI-generated answers. As search shifts from links to synthesized responses, you need something that can monitor, analyze, and act across these engines continuously.
 
@@ -12,48 +12,65 @@ AEO (Answer Engine Optimization) is about making sure your content shows up accu
 
 ```bash
 npm install -g @ainyc/canonry
-canonry agent setup
-```
-
-One command. It installs the agent runtime, configures the agent's LLM, sets up monitoring providers, and seeds the workspace. Interactive prompts guide you through everything, or pass flags for fully automated setup:
-
-```bash
-canonry agent setup --gemini-key <key> --agent-key <key> --format json
-```
-
-Then start the agent and server:
-
-```bash
-canonry serve &
-canonry agent start
-```
-
-Open [http://localhost:4100](http://localhost:4100) for the web dashboard. The agent runs in the background, ready to orchestrate sweeps and act on results.
-
-### Monitoring only (no agent)
-
-If you just want the monitoring layer without the autonomous agent:
-
-```bash
-npm install -g @ainyc/canonry
 canonry init
 canonry serve
 ```
 
-## What the Agent Does
+Interactive prompts guide you through provider keys, or pass everything as flags:
 
-The Canonry agent ("Aero") is an autonomous operator:
+```bash
+canonry init --gemini-key <key> --openai-key <key>
+canonry serve
+```
 
-- **Monitors** visibility sweeps across providers on schedule, tracking citation changes over time
-- **Analyzes** regressions, emerging opportunities, and correlates visibility shifts with site changes
-- **Operates** across your content, schema markup, indexing submissions, and `llms.txt` to coordinate fixes and generate action-oriented reports
-- **Remembers** client context across sessions: canonical domains, historical patterns, known issues
+Open [http://localhost:4100](http://localhost:4100) for the web dashboard. Aero's command bar sits at the bottom of every project page.
 
-Every action the agent takes goes through the same CLI and API available to everyone. No special SDK, no hidden state.
+### Talking to Aero (built-in agent)
+
+From the CLI:
+
+```bash
+# One-shot turn — Aero picks the right tools and analyzes on its own.
+canonry agent ask my-project "Why did the last run fail? Recommend a fix."
+
+# Pick a specific LLM:
+ANTHROPIC_API_KEY=... canonry agent ask my-project "…" --provider anthropic
+ZAI_API_KEY=...        canonry agent ask my-project "…" --provider zai
+```
+
+Aero uses whichever LLM has an API key configured in `~/.canonry/config.yaml`
+or exported (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`,
+`ZAI_API_KEY`). Conversations persist across invocations per project.
+
+Aero also wakes up **unprompted** after each run completes — analyzing the
+new data and writing the result back to the project's transcript so you see
+it next time you open the bar or run `canonry agent ask`.
+
+### Bringing your own agent (webhook)
+
+If you'd rather drive Canonry from Claude Code, Codex, or a custom agent,
+wire a webhook to receive run/insight events:
+
+```bash
+canonry agent attach my-project --url https://my-agent.example.com/hooks/canonry
+```
+
+Your agent receives `run.completed`, `insight.critical`, `insight.high`, and
+`citation.gained` notifications. Detach with `canonry agent detach my-project`.
+
+## How agents use Canonry
+
+Canonry's CLI and API are the agent interface — no special SDK, no MCP layer, no virtual filesystem. Every command supports `--format json`; every dashboard view has a matching API endpoint.
+
+- **Monitor** visibility sweeps across providers on a schedule, tracking citation changes over time
+- **Analyze** regressions, emerging opportunities, and correlations with site changes
+- **Coordinate** fixes across content, schema markup, indexing submissions, and `llms.txt`
+- **Report** results in a machine-readable form agents can act on
 
 ## Features
 
-- **Agent-operated.** The bundled agent monitors, analyzes, and acts autonomously. Humans supervise via the dashboard.
+- **Built-in AI agent (Aero).** Reads state, analyzes regressions, fires write tools (`run_sweep`, `dismiss_insight`, `update_schedule`, etc.), wakes up unprompted after runs. Backed by [`pi-agent-core`](https://github.com/badlogic/pi-mono) — 15+ LLM providers, streaming first.
+- **Agent-first.** Every CLI command supports `--format json`; every UI view has a matching API endpoint.
 - **Multi-provider.** Query Gemini, OpenAI, Claude, Perplexity, and local LLMs from a single platform.
 - **Config-as-code.** Kubernetes-style YAML files. Version control your monitoring, let agents apply changes declaratively.
 - **Self-hosted.** Runs locally with SQLite. No cloud account required.
@@ -64,17 +81,17 @@ Every action the agent takes goes through the same CLI and API available to ever
 
 ## How It Works
 
-The agent uses the same CLI and API that humans do. A typical cycle:
+A typical cycle — run manually or from an external agent:
 
 ```bash
 canonry apply canonry.yaml --format json         # define projects from YAML specs
 canonry run my-project --wait --format json       # sweep all providers
 canonry evidence my-project --format json         # inspect citation evidence
-canonry insights my-project --format json         # get agent-generated analysis
+canonry insights my-project --format json         # DB-backed insight analysis
 canonry health my-project --format json           # visibility health snapshot
 ```
 
-The agent runs these automatically on schedule, detects changes, and generates reports. You can run the same commands manually at any time.
+Schedule cron-based sweeps with `canonry schedule` and subscribe an agent webhook via `canonry agent attach` to act on results as they land.
 
 ## Config-as-Code
 
@@ -148,9 +165,7 @@ Integration setup guides: [Google Search Console](docs/google-search-console-set
 
 ## Skills
 
-The agent learns how to operate canonry through bundled skills that cover CLI commands, provider setup, analysis workflows, and troubleshooting. Skills are seeded into the agent workspace during `canonry agent setup`.
-
-**Claude Code** also picks up the skill automatically from `.claude/skills/canonry-setup/` when you open this repo.
+Canonry ships a bundled `canonry-setup` skill that documents the CLI commands, provider setup, analysis workflows, and troubleshooting patterns an agent needs to operate the platform. **Claude Code** picks up the skill automatically from `.claude/skills/canonry-setup/` when you open this repo.
 
 ## Deployment
 
