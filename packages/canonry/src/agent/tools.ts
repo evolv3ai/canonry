@@ -183,6 +183,38 @@ function buildGetRunTool(ctx: ToolContext): AgentTool<typeof RunDetailSchema> {
   }
 }
 
+const BacklinksSchema = Type.Object({
+  limit: Type.Optional(
+    Type.Number({
+      description: 'Max linking-domain rows to include. Default 50, max 200.',
+      minimum: 1,
+      maximum: 200,
+    }),
+  ),
+  release: Type.Optional(
+    Type.String({
+      description: 'Common Crawl release id (e.g., cc-main-2026-jan-feb-mar). Omit for the most recent release with data.',
+    }),
+  ),
+})
+
+function buildListBacklinksTool(ctx: ToolContext): AgentTool<typeof BacklinksSchema> {
+  return {
+    name: 'list_backlinks',
+    label: 'List backlinks',
+    description:
+      'Backlink summary and top linking domains from the most recent ready Common Crawl release. Off-site authority signal that correlates with citation likelihood. Returns null summary when no release sync has completed for this workspace.',
+    parameters: BacklinksSchema,
+    execute: async (_toolCallId, params) => {
+      const response = await ctx.client.backlinksDomains(ctx.projectName, {
+        limit: params.limit ?? 50,
+        release: params.release,
+      })
+      return textResult(response)
+    },
+  }
+}
+
 const RecallSchema = Type.Object({
   limit: Type.Optional(
     Type.Number({
@@ -218,6 +250,7 @@ export function buildReadTools(ctx: ToolContext): AgentTool[] {
     buildListCompetitorsTool(ctx) as unknown as AgentTool,
     buildGetRunTool(ctx) as unknown as AgentTool,
     buildRecallTool(ctx) as unknown as AgentTool,
+    buildListBacklinksTool(ctx) as unknown as AgentTool,
   ]
 }
 

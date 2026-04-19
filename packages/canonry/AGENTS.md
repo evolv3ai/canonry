@@ -23,6 +23,9 @@ The publishable npm package (`@ainyc/canonry`). Bundles the CLI, local Fastify s
 | `src/commands/health-cmd.ts` | `health` command implementation |
 | `src/commands/backfill.ts` | Historical recomputation for answer visibility fields and insights |
 | `src/commands/ga.ts` | GA4 commands: `ga sync`, `ga traffic`, `ga status`, `ga social-referral-history`, `ga social-referral-summary`, `ga attribution` |
+| `src/commands/backlinks.ts` | Backlinks commands: `backlinks install`, `doctor`, `status`, `sync`, `list`, `extract`, `releases`, `cache prune` |
+| `src/commoncrawl-sync.ts` | `executeReleaseSync` — workspace-level Common Crawl release download + DuckDB query job |
+| `src/backlink-extract.ts` | `executeBacklinkExtract` — per-project backlink extraction run |
 | `src/agent-webhook.ts` | `AGENT_WEBHOOK_EVENTS` — event list subscribed to by `canonry agent attach` |
 | `src/commands/agent.ts` | `agentAttach` / `agentDetach` — wire an external agent's webhook to a project |
 | `src/commands/agent-ask.ts` | `agentAsk` — one-shot turn against the built-in Aero agent, streams events to stdout |
@@ -33,7 +36,7 @@ The publishable npm package (`@ainyc/canonry`). Bundles the CLI, local Fastify s
 | `src/agent/compaction.ts` | Transcript compaction — `shouldCompact`, `findSafeSplit` (snaps to user-message boundaries), `runSummaryLlm` (one-shot pi-ai `complete()` call), and `compactMessages` which persists the summary as a `compaction:` memory row and returns the kept suffix. |
 | `src/agent/compaction-config.ts` | Tuning constants for compaction — token threshold, target ratio, preserved-tail size, max-messages hard cap. |
 | `src/agent/token-counter.ts` | `estimateMessageTokens` / `estimateTranscriptTokens` — chars/4 heuristic handling user/assistant/toolResult content shapes. Used only to decide when to compact, not to enforce provider limits. |
-| `src/agent/tools.ts` | 16 canonry-state `AgentTool` definitions — 8 read (`get_status`, `get_health`, `get_timeline`, `get_insights`, `list_keywords`, `list_competitors`, `get_run`, `recall`) and 8 write (`run_sweep`, `dismiss_insight`, `add_keywords`, `add_competitors`, `update_schedule`, `attach_agent_webhook`, `remember`, `forget`) |
+| `src/agent/tools.ts` | 17 canonry-state `AgentTool` definitions — 9 read (`get_status`, `get_health`, `get_timeline`, `get_insights`, `list_keywords`, `list_competitors`, `get_run`, `recall`, `list_backlinks`) and 8 write (`run_sweep`, `dismiss_insight`, `add_keywords`, `add_competitors`, `update_schedule`, `attach_agent_webhook`, `remember`, `forget`) |
 | `src/agent/skill-tools.ts` | 2 skill-doc tools (`list_skill_docs`, `read_skill_doc`) — progressive disclosure of bundled reference playbooks. Ride in every scope. |
 | `src/agent/skill-paths.ts` | `resolveAeroSkillDir` — finds the on-disk `skills/aero/` (prod/dev/repo candidate paths) for the prompt loader and skill-doc tools |
 | `src/agent/agent-routes.ts` | Fastify routes — `GET/DELETE transcript` + `POST prompt` (SSE) for the dashboard Aero bar |
@@ -126,12 +129,12 @@ consume Canonry through the external-agent webhook.
   runs for the same project dedupe via an in-flight promise map.
 
 Tool surface has two layers:
-- **Canonry state** (`src/agent/tools.ts`) — 8 read (status/health/timeline/
-  insights/keywords/competitors/run detail/recall) + 8 write (run sweep /
-  dismiss insight / add keywords / add competitors / update schedule /
-  attach webhook / remember / forget). Project name is closed over by
-  `ToolContext` so the LLM can't target the wrong project; tools surface
-  their intent via `tool_execution_start` events.
+- **Canonry state** (`src/agent/tools.ts`) — 9 read (status/health/timeline/
+  insights/keywords/competitors/run detail/recall/backlinks) + 8 write
+  (run sweep / dismiss insight / add keywords / add competitors /
+  update schedule / attach webhook / remember / forget). Project name is
+  closed over by `ToolContext` so the LLM can't target the wrong project;
+  tools surface their intent via `tool_execution_start` events.
 - **Skill docs** (`src/agent/skill-tools.ts`) — 2 tools (`list_skill_docs`,
   `read_skill_doc`) for progressive disclosure of bundled reference playbooks.
   Ride in every scope. `SKILL.md` stays lightweight; detailed playbooks
