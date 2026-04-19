@@ -2,9 +2,15 @@ import { agentAttach, agentDetach } from '../commands/agent.js'
 import { agentAsk, type AgentAskScope } from '../commands/agent-ask.js'
 import { agentProviders } from '../commands/agent-providers.js'
 import { agentTranscript, agentTranscriptReset } from '../commands/agent-transcript.js'
+import {
+  agentMemoryForget,
+  agentMemoryList,
+  agentMemorySet,
+} from '../commands/agent-memory.js'
 import { coerceAgentProvider, listAgentProviders } from '../agent/session.js'
 import type { CliCommandSpec } from '../cli-dispatch.js'
 import { getString, stringOption } from '../cli-command-helpers.js'
+import { usageError } from '../cli-error.js'
 
 const AGENT_ASK_SCOPES: readonly AgentAskScope[] = ['all', 'read-only']
 
@@ -122,6 +128,66 @@ export const AGENT_CLI_COMMANDS: readonly CliCommandSpec[] = [
         return
       }
       await agentTranscriptReset({ project, format: input.format })
+    },
+  },
+  {
+    path: ['agent', 'memory', 'list'],
+    usage: 'canonry agent memory list <project> [--format json]',
+    options: {},
+    run: async (input) => {
+      const project = input.positionals[0]
+      if (!project) {
+        throw usageError('Usage: canonry agent memory list <project>', {
+          message: 'project name is required',
+        })
+      }
+      await agentMemoryList({ project, format: input.format })
+    },
+  },
+  {
+    path: ['agent', 'memory', 'set'],
+    usage: 'canonry agent memory set <project> --key <k> --value <v> [--format json]',
+    options: {
+      key: stringOption(),
+      value: stringOption(),
+    },
+    run: async (input) => {
+      const project = input.positionals[0]
+      if (!project) {
+        throw usageError('Usage: canonry agent memory set <project> --key <k> --value <v>', {
+          message: 'project name is required',
+        })
+      }
+      const key = getString(input.values, 'key')
+      const value = getString(input.values, 'value')
+      if (!key || !value) {
+        throw usageError('--key and --value are both required.', {
+          message: '--key and --value are both required',
+        })
+      }
+      await agentMemorySet({ project, key, value, format: input.format })
+    },
+  },
+  {
+    path: ['agent', 'memory', 'forget'],
+    usage: 'canonry agent memory forget <project> --key <k> [--format json]',
+    options: {
+      key: stringOption(),
+    },
+    run: async (input) => {
+      const project = input.positionals[0]
+      if (!project) {
+        throw usageError('Usage: canonry agent memory forget <project> --key <k>', {
+          message: 'project name is required',
+        })
+      }
+      const key = getString(input.values, 'key')
+      if (!key) {
+        throw usageError('--key is required.', {
+          message: '--key is required',
+        })
+      }
+      await agentMemoryForget({ project, key, format: input.format })
     },
   },
 ]
