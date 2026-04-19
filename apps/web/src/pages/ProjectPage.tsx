@@ -18,6 +18,7 @@ import { BingSummaryMetric } from '../components/project/BingSummaryMetric.js'
 import { AnalyticsSection } from '../components/project/AnalyticsSection.js'
 import { TrafficSection } from '../components/project/TrafficSection.js'
 import { GscSection } from '../components/project/GscSection.js'
+import { BacklinksSection } from '../components/project/BacklinksSection.js'
 import { formatTimestamp, SEARCH_METRIC_SHORT_LABELS, SearchMetric } from '../lib/format-helpers.js'
 import { addToast } from '../lib/toast-store.js'
 import { ProjectSettingsSection } from '../components/project/ProjectSettingsSection.js'
@@ -61,7 +62,7 @@ import { useDrawer } from '../hooks/use-drawer.js'
 import { findProjectVm } from '../mock-data.js'
 import type { ProjectCommandCenterVm, RunHistoryPoint } from '../view-models.js'
 
-export type ProjectPageTab = 'overview' | 'search-console' | 'analytics' | 'traffic'
+export type ProjectPageTab = 'overview' | 'search-console' | 'analytics' | 'traffic' | 'inbound'
 
 type SearchConsoleWorkspace = 'google' | 'bing'
 
@@ -1228,6 +1229,7 @@ export function ProjectPage({
     { key: 'search-console', label: 'Search Engine Intelligence', href: `/projects/${model.project.id}/search-console` },
     { key: 'traffic', label: 'Traffic', href: `/projects/${model.project.id}/traffic` },
     { key: 'analytics', label: 'Visibility', href: `/projects/${model.project.id}/analytics` },
+    { key: 'inbound', label: 'Inbound', href: `/projects/${model.project.id}/inbound` },
   ]
 
   return (
@@ -1625,6 +1627,8 @@ export function ProjectPage({
         <AnalyticsSection projectName={model.project.name} />
       ) : tab === 'traffic' ? (
         <TrafficSection projectName={model.project.name} />
+      ) : tab === 'inbound' ? (
+        <BacklinksSection projectName={model.project.name} />
       ) : (
         <SearchConsoleSection projectName={model.project.name} />
       )}
