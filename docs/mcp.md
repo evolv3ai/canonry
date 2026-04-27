@@ -18,7 +18,15 @@ The package exposes one MCP executable:
 canonry-mcp
 ```
 
-There is no `canonry mcp` wrapper. Keeping MCP out of the main CLI avoids telemetry, help text, first-run hints, or command output paths that could pollute stdio.
+`canonry-mcp` itself stays out of the main CLI to keep stdio clean — telemetry, help text, or stray logs would corrupt the protocol. The main CLI does ship two read/write *helpers* that operate on client config files only:
+
+```bash
+canonry mcp install --client claude-desktop
+canonry mcp install --client cursor --read-only
+canonry mcp config  --client codex            # print snippet for clients without auto-install
+```
+
+`install` merges a `canonry` MCP server entry into the client's config (creating the file if needed, backing up the original to `<config>.canonry.bak`). It is idempotent — re-running with the same flags is a no-op. `config` prints the snippet to stdout for copy-paste or use in unsupported clients (currently Codex CLI, since it uses TOML). Both helpers accept `--name <server>` to install under a custom key, `--read-only` to scope to the 33 read tools, `--dry-run` (install only), and `--format json` for machine-readable output.
 
 ## Auth
 
@@ -64,11 +72,15 @@ args = []
 
 ## Tool Surface
 
-v1 is curated for client usability: 43 tools total, 33 read tools in read-only mode. It covers projects, runs, snapshots, insights, health, keywords, competitors, schedules, settings, GSC reads, GA reads, run trigger/cancel, keyword and competitor updates, schedule updates, insight dismiss, and agent webhook attach/detach.
+v1 is curated for client usability: 48 tools total, 33 read tools in read-only mode. It covers projects, config apply, runs, snapshots, insights, health, keyword generation and replacement, competitor add/remove, schedules, settings, GSC reads, GA reads, run trigger/cancel, schedule updates, insight dismiss, and agent webhook attach/detach.
 
-Deferred from v1: Aero ask SSE, OAuth callbacks, raw screenshots, project create/update/delete, `apply`, snapshot generation, broad admin/provider writes, Google/Bing/GA connect/sync/inspect/indexing writes, WordPress writes, CDP screenshot, generic notifications, backlinks, raw OpenAPI, and raw HTTP escape hatches.
+`canonry_apply_config` accepts one config-as-code project document per call. For multi-document YAML or multiple project files, agents should call the tool once per project document. `canonry_keywords_generate` returns suggestions only; persist accepted suggestions with `canonry_keywords_add` or replace the tracked set with `canonry_keywords_replace`.
 
-Some write tools compose existing API calls rather than using a native atomic endpoint. `canonry_competitors_add` and the agent webhook attach/detach tools are best-effort under concurrent calls until the public API grows narrower append/remove operations for those domains.
+Deferred from v1: Aero ask SSE, OAuth callbacks, raw screenshots, project delete, snapshot generation, broad admin/provider writes, Google/Bing/GA connect/sync/inspect/indexing writes, WordPress writes, CDP screenshot, generic notifications, backlinks, raw OpenAPI, and raw HTTP escape hatches.
+
+Some write tools compose existing API calls rather than using a native atomic endpoint. The agent webhook attach/detach tools are best-effort under concurrent calls until the public API grows narrower attach/detach operations for that domain.
+
+`canonry_project_upsert` and `canonry_apply_config` use PUT semantics — fields omitted from the request are reset to their defaults. Pass the full intended project shape. `canonry_apply_config` accepts one project document per call; loop on the client side for multi-project configs.
 
 ## Safety Rules
 
