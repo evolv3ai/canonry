@@ -645,6 +645,19 @@ export async function ga4Routes(app: FastifyInstance, opts: GA4RoutesOptions) {
       )
       .get()
 
+    // Session-source-only AI total: sessions whose CURRENT sessionSource matched
+    // an AI engine. Disjoint from sessionDefaultChannelGrouping = 'Direct' (those
+    // sessions have no source by definition), so it's safe to display alongside
+    // Organic/Social/Direct in a four-channel breakdown without overlap.
+    const aiBySession = app.db
+      .select({
+        sessions: sql<number>`COALESCE(SUM(${gaAiReferrals.sessions}), 0)`,
+        users: sql<number>`COALESCE(SUM(${gaAiReferrals.users}), 0)`,
+      })
+      .from(gaAiReferrals)
+      .where(and(...aiConditions, eq(gaAiReferrals.sourceDimension, 'session')))
+      .get()
+
     const socialReferrals = app.db
       .select({
         source: gaSocialReferrals.source,
@@ -702,6 +715,8 @@ export async function ga4Routes(app: FastifyInstance, opts: GA4RoutesOptions) {
       })),
       aiSessionsDeduped: aiDeduped?.sessions ?? 0,
       aiUsersDeduped: aiDeduped?.users ?? 0,
+      aiSessionsBySession: aiBySession?.sessions ?? 0,
+      aiUsersBySession: aiBySession?.users ?? 0,
       socialReferrals: socialReferrals.map((r) => ({
         source: r.source,
         medium: r.medium,
@@ -713,6 +728,7 @@ export async function ga4Routes(app: FastifyInstance, opts: GA4RoutesOptions) {
       socialUsers: socialTotals?.users ?? 0,
       organicSharePct: total > 0 ? Math.round(((summaryRow?.totalOrganicSessions ?? 0) / total) * 100) : 0,
       aiSharePct: total > 0 ? Math.round(((aiDeduped?.sessions ?? 0) / total) * 100) : 0,
+      aiSharePctBySession: total > 0 ? Math.round(((aiBySession?.sessions ?? 0) / total) * 100) : 0,
       directSharePct: total > 0 ? Math.round((totalDirectSessions / total) * 100) : 0,
       socialSharePct: total > 0 ? Math.round(((socialTotals?.sessions ?? 0) / total) * 100) : 0,
       lastSyncedAt: latestSync?.syncedAt ?? null,
@@ -896,15 +912,25 @@ export async function ga4Routes(app: FastifyInstance, opts: GA4RoutesOptions) {
       .where(and(eq(gaTrafficSnapshots.projectId, project.id), sql`${gaTrafficSnapshots.date} >= ${from}`, sql`${gaTrafficSnapshots.date} < ${to}`))
       .get()
 
-    // --- AI sessions (deduped: MAX per date+source+medium across dimensions, then SUM) ---
+    // --- Direct sessions (from gaTrafficSnapshots.directSessions) ---
+    const sumDirect = (from: string, to: string) => app.db
+      .select({ sessions: sql<number>`COALESCE(SUM(${gaTrafficSnapshots.directSessions}), 0)` })
+      .from(gaTrafficSnapshots)
+      .where(and(eq(gaTrafficSnapshots.projectId, project.id), sql`${gaTrafficSnapshots.date} >= ${from}`, sql`${gaTrafficSnapshots.date} < ${to}`))
+      .get()
+
+    // --- AI sessions (sessionSource only, matching the disjoint Channel Breakdown cell). ---
+    // Trend must use the same scope as the displayed AI count, otherwise the row can show
+    // 5 sessions with a trend computed off 12 cross-dimensional sessions.
     const sumAi = (from: string, to: string) => app.db
-      .select({ sessions: sql<number>`COALESCE(SUM(max_sessions), 0)` })
-      .from(sql`(
-        SELECT date, source, medium, MAX(sessions) AS max_sessions
-        FROM ga_ai_referrals
-        WHERE project_id = ${project.id} AND date >= ${from} AND date < ${to}
-        GROUP BY date, source, medium
-      )`)
+      .select({ sessions: sql<number>`COALESCE(SUM(${gaAiReferrals.sessions}), 0)` })
+      .from(gaAiReferrals)
+      .where(and(
+        eq(gaAiReferrals.projectId, project.id),
+        sql`${gaAiReferrals.date} >= ${from}`,
+        sql`${gaAiReferrals.date} < ${to}`,
+        eq(gaAiReferrals.sourceDimension, 'session'),
+      ))
       .get()
 
     // --- Social sessions ---
@@ -924,27 +950,29 @@ export async function ga4Routes(app: FastifyInstance, opts: GA4RoutesOptions) {
       return { sessions7d: c7, sessionsPrev7d: p7, trend7dPct: pct(c7, p7), sessions30d: c30, sessionsPrev30d: p30, trend30dPct: pct(c30, p30) }
     }
 
-    // --- Biggest movers (AI) ---
+    // --- Biggest movers (AI) — sessionSource-only to match the breakdown cell scope. ---
     const aiSourceCurrent = app.db
-      .select({ source: sql<string>`source`, sessions: sql<number>`COALESCE(SUM(max_sessions), 0)` })
-      .from(sql`(
-        SELECT date, source, medium, MAX(sessions) AS max_sessions
-        FROM ga_ai_referrals
-        WHERE project_id = ${project.id} AND date >= ${daysAgo(7)} AND date < ${todayStr}
-        GROUP BY date, source, medium
-      )`)
-      .groupBy(sql`source`)
+      .select({ source: gaAiReferrals.source, sessions: sql<number>`COALESCE(SUM(${gaAiReferrals.sessions}), 0)` })
+      .from(gaAiReferrals)
+      .where(and(
+        eq(gaAiReferrals.projectId, project.id),
+        sql`${gaAiReferrals.date} >= ${daysAgo(7)}`,
+        sql`${gaAiReferrals.date} < ${todayStr}`,
+        eq(gaAiReferrals.sourceDimension, 'session'),
+      ))
+      .groupBy(gaAiReferrals.source)
       .all()
 
     const aiSourcePrev = app.db
-      .select({ source: sql<string>`source`, sessions: sql<number>`COALESCE(SUM(max_sessions), 0)` })
-      .from(sql`(
-        SELECT date, source, medium, MAX(sessions) AS max_sessions
-        FROM ga_ai_referrals
-        WHERE project_id = ${project.id} AND date >= ${daysAgo(14)} AND date < ${daysAgo(7)}
-        GROUP BY date, source, medium
-      )`)
-      .groupBy(sql`source`)
+      .select({ source: gaAiReferrals.source, sessions: sql<number>`COALESCE(SUM(${gaAiReferrals.sessions}), 0)` })
+      .from(gaAiReferrals)
+      .where(and(
+        eq(gaAiReferrals.projectId, project.id),
+        sql`${gaAiReferrals.date} >= ${daysAgo(14)}`,
+        sql`${gaAiReferrals.date} < ${daysAgo(7)}`,
+        eq(gaAiReferrals.sourceDimension, 'session'),
+      ))
+      .groupBy(gaAiReferrals.source)
       .all()
 
     const findBiggestMover = (
@@ -985,6 +1013,7 @@ export async function ga4Routes(app: FastifyInstance, opts: GA4RoutesOptions) {
       organic: buildTrend(sumOrganic),
       ai: buildTrend(sumAi),
       social: buildTrend(sumSocial),
+      direct: buildTrend(sumDirect),
       aiBiggestMover: findBiggestMover(aiSourceCurrent, aiSourcePrev),
       socialBiggestMover: findBiggestMover(socialSourceCurrent, socialSourcePrev),
     }
