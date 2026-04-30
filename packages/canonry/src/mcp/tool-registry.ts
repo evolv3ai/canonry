@@ -409,6 +409,17 @@ export const canonryMcpTools = [
     handler: (client, input) => client.getHealthHistory(input.project, input.limit),
   }),
   defineTool({
+    name: 'canonry_citations_visibility',
+    title: 'Get citation visibility',
+    description: 'Single-call AI citation surface for a Canonry project. Returns the project headline (cited by N of M engines), per-keyword engine coverage rows from the latest snapshot per (keyword × provider), and a competitor-gap list (keywords where a configured competitor is cited but the project is not). Carries `status: "no-data"` with `reason: "no-keywords"` or `"no-runs-yet"` when inputs are missing.',
+    access: 'read',
+    tier: 'monitoring',
+    inputSchema: projectInputSchema,
+    annotations: readAnnotations(),
+    openApiOperations: ['GET /api/v1/projects/{name}/citations/visibility'],
+    handler: (client, input) => client.getCitationVisibility(input.project),
+  }),
+  defineTool({
     name: 'canonry_content_targets',
     title: 'Get content targets',
     description: 'Ranked, action-typed content opportunities. Each row is `{query, action ∈ create|expand|refresh|add-schema, ourBestPage?, winningCompetitor?, score, scoreBreakdown, drivers[], demandSource, actionConfidence}`. Use this to recommend which post the user should write or refresh next.',
