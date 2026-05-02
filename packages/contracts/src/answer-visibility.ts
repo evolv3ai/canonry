@@ -186,6 +186,12 @@ function normalizeText(value: string): string {
 function brandNormalizedCandidates(displayName: string): string[] {
   const original = normalizeText(displayName)
   if (!original) return []
+  // Apply MIN_BRAND_KEY_LENGTH to the original so a short displayName (e.g.
+  // "LI" → "li", "Inc" → "inc") cannot substring-match inside unrelated words
+  // like "tile", "vinyl", or "incident". Short brands can still match through
+  // the domain-mention path, the distinctive-tokens path (word-boundary), or
+  // the brand-key path (which already enforces the same threshold).
+  if (brandKeyFromText(original).length < MIN_BRAND_KEY_LENGTH) return []
   const stripped = stripBusinessSuffix(original, ' ')
   if (!stripped || stripped === original) return [original]
   // Apply the same MIN_BRAND_KEY_LENGTH guard as the brand-key path: a stripped

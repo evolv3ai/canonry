@@ -776,20 +776,46 @@ describe('extractAnswerMentions', () => {
   })
 
   it('does not strip a classifier when only the classifier itself remains', () => {
-    // Edge case: display name is just "Inc" (3 chars). Stripping would leave
-    // empty/too-short. The original "inc" stays and is below the brand-key
-    // threshold, so loose matching is gated off.
+    // Edge case: display name is just "Inc" (3 chars). The original "inc" is
+    // below MIN_BRAND_KEY_LENGTH, so the normalized-substring path is gated
+    // off entirely — "incident" no longer trips a false positive.
     const result = extractAnswerMentions(
       'The incident report is attached.',
       'Inc',
       ['inc.example.com'],
     )
-    // strict normalized "inc" .includes against "the incident report is attached"
-    // → "inc" appears as substring in "incident", which IS a pre-existing
-    // limitation of the strict path for very short brand names. The classifier
-    // stripping logic must not amplify this — verify "Inc" alone is handled
-    // sanely (no crash, no expanded matching from stripping).
-    expect(result.matchedTerms.filter(t => t === '').length).toBe(0)
+    expect(result.mentioned).toBe(false)
+    expect(result.matchedTerms).toEqual([])
+  })
+
+  it('does not substring-match short normalized display names inside common words', () => {
+    // Regression: a project with displayName "LI" must not flag every
+    // commercial-flooring answer as "mentioned" because the 2-letter "li"
+    // appears inside "tile", "vinyl", "polished", "installation", etc.
+    // Short brands rely on the domain-mention and distinctive-tokens paths;
+    // the normalized-substring path is gated by MIN_BRAND_KEY_LENGTH.
+    const tileAnswer = 'We install ceramic tile, vinyl, and polished concrete in commercial buildings.'
+    const result = extractAnswerMentions(
+      tileAnswer,
+      'LI',
+      ['larrysinteriors.com'],
+    )
+    expect(result.mentioned).toBe(false)
+    expect(result.matchedTerms).toEqual([])
+
+    // Sanity: when the same project's domain or full brand actually appears,
+    // detection still works through the protected paths.
+    expect(extractAnswerMentions(
+      'Visit larrysinteriors.com for commercial flooring quotes.',
+      'LI',
+      ['larrysinteriors.com'],
+    ).mentioned).toBe(true)
+
+    expect(extractAnswerMentions(
+      "Larry's Interiors has installed flooring across East Texas since 1978.",
+      "Larry's Interiors",
+      ['larrysinteriors.com'],
+    ).mentioned).toBe(true)
   })
 })
 
