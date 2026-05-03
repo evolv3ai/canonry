@@ -710,10 +710,8 @@ describe('extractAnswerMentions', () => {
   })
 
   it('does not loose-match short brand+suffix pairings via the stripped normalized candidate', () => {
-    // "Bob Inc" stripped normalized candidate is "bob"; without the
-    // length gate, this would substring-match inside words like "bobsled".
-    // The brand-key path's MIN_BRAND_KEY_LENGTH threshold must apply to the
-    // stripped normalized candidate too.
+    // "Bob Inc" stripped normalized candidate is "bob"; matched as a whole
+    // word, "bob" must not match inside "bobsled".
     const result = extractAnswerMentions(
       'Bobsled racing is fun this winter.',
       'Bob Inc',
@@ -721,6 +719,15 @@ describe('extractAnswerMentions', () => {
     )
     expect(result.mentioned).toBe(false)
     expect(result.matchedTerms).toEqual([])
+
+    // Companion positive: when the stripped form appears as a whole word,
+    // it should still match — whole-word matching protects without erasing
+    // legitimate detections.
+    expect(extractAnswerMentions(
+      'Bob is great at fixing things.',
+      'Bob Inc',
+      ['bob.example.com'],
+    ).mentioned).toBe(true)
   })
 
   it('matches when display name carries a trailing LLC/Inc/Corp classifier', () => {
@@ -775,36 +782,56 @@ describe('extractAnswerMentions', () => {
     expect(result.mentioned).toBe(true)
   })
 
-  it('does not strip a classifier when only the classifier itself remains', () => {
-    // Edge case: display name is just "Inc" (3 chars). The original "inc" is
-    // below MIN_BRAND_KEY_LENGTH, so the normalized-substring path is gated
-    // off entirely — "incident" no longer trips a false positive.
-    const result = extractAnswerMentions(
+  it('matches a short classifier-only display name only when it appears as a whole word', () => {
+    // Edge case: displayName is just "Inc" (3 chars). It must NOT false-match
+    // inside "incident" (substring) but MUST match when "Inc" appears as a
+    // standalone word.
+    expect(extractAnswerMentions(
       'The incident report is attached.',
       'Inc',
       ['inc.example.com'],
-    )
-    expect(result.mentioned).toBe(false)
-    expect(result.matchedTerms).toEqual([])
+    ).mentioned).toBe(false)
+
+    expect(extractAnswerMentions(
+      'Inc said in their filing today.',
+      'Inc',
+      ['inc.example.com'],
+    ).mentioned).toBe(true)
   })
 
-  it('does not substring-match short normalized display names inside common words', () => {
+  it('matches short normalized display names only as whole words, not as substrings', () => {
     // Regression: a project with displayName "LI" must not flag every
     // commercial-flooring answer as "mentioned" because the 2-letter "li"
-    // appears inside "tile", "vinyl", "polished", "installation", etc.
-    // Short brands rely on the domain-mention and distinctive-tokens paths;
-    // the normalized-substring path is gated by MIN_BRAND_KEY_LENGTH.
-    const tileAnswer = 'We install ceramic tile, vinyl, and polished concrete in commercial buildings.'
-    const result = extractAnswerMentions(
-      tileAnswer,
+    // appears inside "polished", "compliance", etc. — but MUST still match
+    // when "LI" appears as a standalone word.
+
+    // --- Negative cases (false positives the fix prevents) ---
+    expect(extractAnswerMentions(
+      'We install ceramic tile, vinyl, and polished concrete in commercial buildings.',
       'LI',
       ['larrysinteriors.com'],
-    )
-    expect(result.mentioned).toBe(false)
-    expect(result.matchedTerms).toEqual([])
+    ).mentioned).toBe(false)
 
-    // Sanity: when the same project's domain or full brand actually appears,
-    // detection still works through the protected paths.
+    expect(extractAnswerMentions(
+      'The compliance review is scheduled for next week.',
+      'LI',
+      ['larrysinteriors.com'],
+    ).mentioned).toBe(false)
+
+    // --- Positive cases (legitimate matches the fix preserves) ---
+    expect(extractAnswerMentions(
+      'LI is great for commercial flooring projects.',
+      'LI',
+      ['larrysinteriors.com'],
+    ).mentioned).toBe(true)
+
+    expect(extractAnswerMentions(
+      'According to LI, their new line ships in Q3.',
+      'LI',
+      ['larrysinteriors.com'],
+    ).mentioned).toBe(true)
+
+    // --- Domain and full-brand paths still work for short names ---
     expect(extractAnswerMentions(
       'Visit larrysinteriors.com for commercial flooring quotes.',
       'LI',
@@ -816,6 +843,43 @@ describe('extractAnswerMentions', () => {
       "Larry's Interiors",
       ['larrysinteriors.com'],
     ).mentioned).toBe(true)
+  })
+
+  it('matches multi-word short display names as whole phrases', () => {
+    // Regression: short multi-word brands like "AB LLC" or "AI NYC" have a
+    // brand key below MIN_BRAND_KEY_LENGTH and tokens that are individually
+    // too short or generic. The whole-phrase normalized match is the only
+    // text path available — it must work when the phrase appears verbatim
+    // and must NOT fire on substring noise.
+
+    // "AB LLC" appears as a phrase
+    expect(extractAnswerMentions(
+      'AB LLC offers commercial flooring across the region.',
+      'AB LLC',
+      ['ab-llc.example.com'],
+    ).mentioned).toBe(true)
+
+    // "AB LLC" does not appear; should not fire
+    expect(extractAnswerMentions(
+      'The lab llc-equivalent regulations took effect last year.',
+      'AB LLC',
+      ['ab-llc.example.com'],
+    ).mentioned).toBe(false)
+
+    // "AI NYC" appears as a phrase
+    expect(extractAnswerMentions(
+      'AI NYC just shipped their new agent platform.',
+      'AI NYC',
+      ['ainyc.ai'],
+    ).mentioned).toBe(true)
+
+    // "AI NYC" does not appear (note "ai" alone embedded in "said" must not
+    // false-match the candidate "ai nyc")
+    expect(extractAnswerMentions(
+      'She said the report is due tomorrow.',
+      'AI NYC',
+      ['ainyc.ai'],
+    ).mentioned).toBe(false)
   })
 })
 
