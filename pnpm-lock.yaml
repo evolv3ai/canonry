@@ -168,8 +168,8 @@ importers:
   apps/worker:
     dependencies:
       '@ainyc/aeo-audit':
-        specifier: 4.0.1
-        version: 4.0.1
+        specifier: 7.1.0
+        version: 7.1.0
       '@ainyc/canonry-config':
         specifier: workspace:*
         version: link:../../packages/config
@@ -255,8 +255,8 @@ importers:
   packages/canonry:
     dependencies:
       '@ainyc/aeo-audit':
-        specifier: 4.0.1
-        version: 4.0.1
+        specifier: 7.1.0
+        version: 7.1.0
       '@anthropic-ai/sdk':
         specifier: ^0.91.1
         version: 0.91.1(zod@4.3.6)
@@ -557,8 +557,8 @@ importers:
 
 packages:
 
-  '@ainyc/aeo-audit@4.0.1':
-    resolution: {integrity: sha512-8K0fjY5uxcJSEaYW0ccNxxr3BM+nBbMrrltHaKAso6+SFJybK57gLDeIp5h7f+GSJ2QaeZR51XUxGYBgqkQKEQ==}
+  '@ainyc/aeo-audit@7.1.0':
+    resolution: {integrity: sha512-iEEWcuaEXDSICM+VgoXnTsDIrHSL6A3kEO0DgjHhy4w4QZYW0oh8fIi4LC6u7TZ9LEQeEq6dhv+Do0tJO8tvpQ==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -4785,10 +4785,11 @@ packages:
 
 snapshots:
 
-  '@ainyc/aeo-audit@4.0.1':
+  '@ainyc/aeo-audit@7.1.0':
     dependencies:
       cheerio: 1.2.0
       ipaddr.js: 2.3.0
+      undici: 7.24.4
 
   '@anthropic-ai/sdk@0.91.1(zod@4.3.6)':
     dependencies:
